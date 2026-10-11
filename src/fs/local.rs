@@ -59,7 +59,7 @@ impl LocalFs {
                 String::new()
             } else {
                 path.extension()
-                    .map(|e| e.to_string_lossy().to_string())
+                    .map(|e| e.to_string_lossy().to_lowercase())
                     .unwrap_or_default()
             };
 
@@ -94,13 +94,7 @@ impl LocalFs {
                 },
             };
 
-            entries.push(FileEntry {
-                name,
-                path,
-                kind,
-                metadata,
-                extension,
-            });
+            entries.push(FileEntry::new(name, path, kind, metadata, extension));
         }
 
         Self::sort_entries(&mut entries, sort_by, direction, directories_first);
@@ -114,10 +108,39 @@ impl LocalFs {
         direction: SortDirection,
         directories_first: bool,
     ) {
-        // Direct comparator sort: fastest in practice for typical directory
-        // sizes. Only Name/Extension allocate (one lowercase per comparison);
-        // a decorate-sort-undecorate variant measured slower in dev builds
-        // because its setup allocations dominate below ~100k rows.
+        // Name/Extension sorts hoist the lowercase keys (one alloc per
+        // entry) instead of allocating inside the comparator, then reorder
+        // once. Other columns compare inline with no allocation.
+        if matches!(sort_by, SortColumn::Name | SortColumn::Extension) {
+            let names: Vec<String> = entries.iter().map(|e| e.name.to_lowercase()).collect();
+            let mut order: Vec<usize> = (0..entries.len()).collect();
+            order.sort_by(|&a, &b| {
+                if directories_first {
+                    match (entries[a].is_dir(), entries[b].is_dir()) {
+                        (true, false) => return std::cmp::Ordering::Less,
+                        (false, true) => return std::cmp::Ordering::Greater,
+                        _ => {}
+                    }
+                }
+                let mut ord = match sort_by {
+                    SortColumn::Name => names[a].cmp(&names[b]),
+                    _ => entries[a].extension.cmp(&entries[b].extension),
+                };
+                // Deterministic tie-break on name so repeated sorts are
+                // stable regardless of OS enumeration order.
+                if ord == std::cmp::Ordering::Equal && sort_by != SortColumn::Name {
+                    ord = names[a].cmp(&names[b]);
+                }
+                match direction {
+                    SortDirection::Ascending => ord,
+                    SortDirection::Descending => ord.reverse(),
+                }
+            });
+            let sorted: Vec<FileEntry> = order.into_iter().map(|k| entries[k].clone()).collect();
+            entries.clone_from_slice(&sorted);
+            return;
+        }
+
         entries.sort_by(|a, b| {
             if directories_first {
                 let a_is_dir = a.is_dir();

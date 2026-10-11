@@ -15,7 +15,7 @@ impl RiftApp {
             .border_1()
             .border_color(self.theme.keycap_border)
             .font_family(self.theme.font_mono)
-            .text_size(self.theme.font_size_caption)
+            .text_size(self.theme.font_size_shortcut)
             .font_weight(FontWeight::NORMAL)
             .text_color(self.theme.keycap_text)
             .child(key.to_string())
@@ -38,21 +38,25 @@ impl RiftApp {
             .flex()
             .items_center()
             .justify_between()
-            .h(px(30.0))
+            .h(px(32.0))
             .px_3()
-            .bg(self.theme.bg_header)
+            .bg(self.theme.title_bar_background)
             .border_b_1()
             .border_color(self.theme.border)
-            // Left: Clean Branding & Connection State
+            // Left: branding & connection (flex_1 mirrors the right
+            // group so the search field stays exactly centered, which is
+            // what the palette dropdown aligns to).
             .child(
                 div()
                     .flex()
+                    .flex_1()
                     .items_center()
+                    .justify_start()
                     .gap_2()
                     .child(
                         div()
                             .text_color(self.theme.accent)
-                            .font_weight(FontWeight::BOLD)
+                            .font_weight(FontWeight::NORMAL)
                             .text_size(self.theme.font_size_ui)
                             .child("✦ Rift"),
                     )
@@ -66,36 +70,32 @@ impl RiftApp {
                                 .gap_1p5()
                                 .px_1p5()
                                 .py(px(1.5))
-                                .rounded_sm()
+                                .rounded_md()
                                 .child(
                                     div()
                                         .text_color(self.theme.success)
                                         .text_size(px(8.0))
+                                        .font_family(Icons::FAMILY)
                                         .child(Icons::DOT),
                                 )
                                 .child(
                                     div()
                                         .font_family(self.theme.font_mono)
                                         .text_size(self.theme.font_size_caption)
-                                        .text_color(self.theme.text_secondary)
+                                        .text_color(self.theme.text_muted)
                                         .child(conn_lbl),
                                 )
-                                .child(
-                                    div()
-                                        .id("btn-disconnect")
-                                        .cursor_pointer()
-                                        .px_1()
-                                        .py(px(0.5))
-                                        .rounded_sm()
-                                        .hover(|s| s.bg(self.theme.bg_badge_danger).text_color(self.theme.danger))
-                                        .text_size(self.theme.font_size_caption)
-                                        .text_color(self.theme.text_muted)
-                                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
-                                            this.disconnect_remote();
-                                            cx.notify();
-                                        }))
-                                        .child("Disconnect"),
-                                ),
+                                .child(crate::ui::controls::btn(
+                                    self.theme,
+                                    crate::ui::controls::BtnVariant::Secondary,
+                                    "btn-disconnect",
+                                    "Disconnect",
+                                    true,
+                                    cx.listener(|this, _ev, _window, cx| {
+                                        this.disconnect_remote();
+                                        cx.notify();
+                                    }),
+                                )),
                         )
                     })
                     .when(!is_connected, |el| {
@@ -108,11 +108,11 @@ impl RiftApp {
                                 .gap_1()
                                 .px_2()
                                 .py(px(2.0))
-                                .rounded_sm()
+                                .rounded_md()
                                 .bg(self.theme.bg_badge_accent)
                                 .hover(|s| s.bg(self.theme.accent).text_color(rgb(0xffffff)))
                                 .text_size(self.theme.font_size_caption)
-                                .font_weight(FontWeight::MEDIUM)
+                                .font_weight(FontWeight::NORMAL)
                                 .text_color(self.theme.accent)
                                 .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
                                     this.open_connect_modal();
@@ -122,21 +122,27 @@ impl RiftApp {
                         )
                     }),
             )
-            // Center: Zed Command Palette Search Input
-            .child(
+            // Center: palette trigger that becomes the live query field
+            // while the dropdown is open.
+            .child({
+                let palette_open = matches!(self.modal, crate::ui::modals::ActiveModal::CommandPalette(_));
+                let query_text = match &self.modal {
+                    crate::ui::modals::ActiveModal::CommandPalette(state) => state.query.clone(),
+                    _ => String::new(),
+                };
                 div()
                     .id("btn-command-palette")
                     .cursor_pointer()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .w(px(280.0))
+                    .w(px(300.0))
                     .h(px(22.0))
                     .px_2p5()
-                    .rounded_sm()
-                    .bg(self.theme.bg_input)
+                    .rounded_md()
+                    .bg(self.theme.element_background)
                     .border_1()
-                    .border_color(self.theme.border)
+                    .border_color(if palette_open { self.theme.accent } else { self.theme.border })
                     .hover(|s| s.border_color(self.theme.accent))
                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
                         this.open_command_palette();
@@ -150,35 +156,55 @@ impl RiftApp {
                             .child(
                                 div()
                                     .text_size(self.theme.font_size_caption)
-                                    .text_color(self.theme.text_muted)
+                                    .font_family(Icons::FAMILY)
+                                    .text_color(if palette_open {
+                                        self.theme.accent
+                                    } else {
+                                        self.theme.text_placeholder
+                                    })
                                     .child(Icons::SEARCH),
                             )
                             .child(
                                 div()
+                                    .font_family(self.theme.font_mono)
                                     .text_size(self.theme.font_size_caption)
-                                    .text_color(self.theme.text_muted)
-                                    .child("Commands, files, or paths..."),
+                                    .text_color(if palette_open {
+                                        self.theme.text
+                                    } else {
+                                        self.theme.text_placeholder
+                                    })
+                                    .child(if palette_open {
+                                        if query_text.is_empty() {
+                                            "Type a command... |".to_string()
+                                        } else {
+                                            format!("{}|", query_text)
+                                        }
+                                    } else {
+                                        "Commands, files, or paths...".to_string()
+                                    }),
                             ),
                     )
                     .child(
                         div()
                             .px_1()
                             .py(px(0.5))
-                            .rounded_sm()
+                            .rounded_md()
                             .bg(self.theme.keycap_bg)
                             .border_1()
                             .border_color(self.theme.keycap_border)
                             .font_family(self.theme.font_mono)
-                            .text_size(px(8.5))
+                            .text_size(self.theme.font_size_shortcut)
                             .text_color(self.theme.keycap_text)
-                            .child("Ctrl+P"),
-                    ),
-            )
-            // Right: Essential Quick Actions
+                            .child(if palette_open { "esc" } else { "Ctrl+P" }),
+                    )
+            })
+            // Right: Essential Quick Actions (mirrors left for centering)
             .child(
                 div()
                     .flex()
+                    .flex_1()
                     .items_center()
+                    .justify_end()
                     .gap_1()
                     .child(
                         div()
@@ -189,17 +215,21 @@ impl RiftApp {
                             .gap_1()
                             .h(px(22.0))
                             .px_2()
-                            .rounded_sm()
+                            .rounded_md()
                             .bg(self.theme.bg_badge_accent)
                             .hover(|s| s.bg(self.theme.accent).text_color(rgb(0xffffff)))
                             .text_size(self.theme.font_size_caption)
-                            .font_weight(FontWeight::MEDIUM)
+                            .font_weight(FontWeight::NORMAL)
                             .text_color(self.theme.accent)
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
                                 this.transfer_selected(this.active_pane, cx);
                                 cx.notify();
                             }))
-                            .child(if is_left { "Transfer →" } else { "← Transfer" })
+                            .child(crate::ui::motion::flash(
+                                self.animations_enabled,
+                                div().child(if is_left { "Transfer →" } else { "← Transfer" }),
+                                ElementId::Name(format!("transfer-label-{}", is_left).into()),
+                            ))
                             .child(self.render_keycap("F5")),
                     )
                     .child(
@@ -211,12 +241,12 @@ impl RiftApp {
                             .gap_1()
                             .h(px(22.0))
                             .px_2()
-                            .rounded_sm()
-                            .when(self.show_transfer_drawer, |s| s.bg(self.theme.bg_selected))
-                            .hover(|s| s.bg(self.theme.bg_row_hover))
+                            .rounded_md()
+                            .when(self.show_transfer_drawer, |s| s.bg(self.theme.element_selected))
+                            .hover(|s| s.bg(self.theme.ghost_element_hover))
                             .text_size(self.theme.font_size_caption)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(self.theme.text_secondary)
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(self.theme.text_muted)
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
                                 this.show_transfer_drawer = !this.show_transfer_drawer;
                                 cx.notify();
@@ -227,11 +257,11 @@ impl RiftApp {
                                     div()
                                         .px(px(3.0))
                                         .py(px(0.5))
-                                        .rounded_sm()
+                                        .rounded_md()
                                         .bg(self.theme.bg_badge_accent)
                                         .font_family(self.theme.font_mono)
-                                        .text_size(px(8.5))
-                                        .font_weight(FontWeight::BOLD)
+                                        .text_size(self.theme.font_size_shortcut)
+                                        .font_weight(FontWeight::NORMAL)
                                         .text_color(self.theme.accent)
                                         .child(self.transfer_items.len().to_string()),
                                 )
@@ -247,10 +277,11 @@ impl RiftApp {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded_sm()
-                            .hover(|s| s.bg(self.theme.bg_row_hover))
+                            .rounded_md()
+                            .hover(|s| s.bg(self.theme.ghost_element_hover))
                             .text_size(self.theme.font_size_caption)
-                            .text_color(self.theme.text_secondary)
+                            .font_family(Icons::FAMILY)
+                            .text_color(self.theme.text_muted)
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
                                 this.open_bookmarks_modal();
                                 cx.notify();
@@ -267,15 +298,19 @@ impl RiftApp {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded_sm()
-                            .hover(|s| s.bg(self.theme.bg_row_hover))
+                            .rounded_md()
+                            .hover(|s| s.bg(self.theme.ghost_element_hover))
                             .text_size(self.theme.font_size_caption)
-                            .text_color(self.theme.text_secondary)
+                            .text_color(self.theme.text_muted)
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
                                 this.toggle_theme();
                                 cx.notify();
                             }))
-                            .child(if self.theme.is_dark { "☀" } else { "☾" }),
+                            .child(crate::ui::motion::flash(
+                                self.animations_enabled,
+                                div().child(if self.theme.is_dark { "☀" } else { "☾" }),
+                                ElementId::Name(format!("theme-icon-{}", self.theme.is_dark).into()),
+                            )),
                     ),
             )
     }

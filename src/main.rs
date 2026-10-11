@@ -27,6 +27,11 @@ fn main() {
             ..Default::default()
         };
 
-        let _ = cx.open_window(options, |_, cx| cx.new(RiftApp::new));
+        let _ = cx.open_window(options, |_, cx| {
+            let view = cx.new(RiftApp::new);
+            let weak = view.downgrade();
+            view.update(cx, |app, _| app.set_self_entity(weak));
+            view
+        });
     });
 }

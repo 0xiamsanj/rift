@@ -1,6 +1,7 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
-use crate::fs::path_utils::get_parent_path;
+use crate::fs::path_utils::{build_breadcrumbs, get_parent_path, BreadcrumbItem};
 use crate::fs::types::{FileEntry, SortColumn, SortDirection};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,7 +15,14 @@ pub struct PaneState {
     pub id: PaneId,
     pub is_remote: bool,
     pub current_path: String,
-    pub entries: Vec<FileEntry>,
+    /// Shared listing: render snapshots `Arc::clone` (pointer copy) instead
+    /// of cloning every entry per frame.
+    pub entries: Arc<Vec<FileEntry>>,
+    /// Breadcrumb trail, rebuilt only when the path changes — never per frame.
+    pub cached_crumbs: Vec<BreadcrumbItem>,
+    /// Directory/file counts and total bytes, refreshed with the listing.
+    /// Selection counts stay live (they must reflect every toggle).
+    pub cached_totals: (usize, usize, u64),
     pub filter: String,
     pub selected_items: HashSet<String>,
     pub focused_index: Option<usize>,
@@ -34,11 +42,14 @@ pub struct PaneState {
 
 impl PaneState {
     pub fn new(id: PaneId, is_remote: bool, initial_path: String) -> Self {
+        let cached_crumbs = build_breadcrumbs(&initial_path, is_remote);
         Self {
             id,
             is_remote,
             current_path: initial_path.clone(),
-            entries: Vec::new(),
+            entries: Arc::new(Vec::new()),
+            cached_crumbs,
+            cached_totals: (0, 0, 0),
             filter: String::new(),
             selected_items: HashSet::new(),
             focused_index: None,
@@ -57,6 +68,18 @@ impl PaneState {
         }
     }
 
+    /// Central path change: updates path, buffer, crumbs together and
+    /// drops selection/filter state that belongs to the old directory.
+    fn set_path(&mut self, new_path: String) {
+        self.current_path = new_path.clone();
+        self.path_input_buffer = new_path;
+        self.cached_crumbs = build_breadcrumbs(&self.current_path, self.is_remote);
+        self.selected_items.clear();
+        self.focused_index = None;
+        self.filter.clear();
+        self.filter_active = false;
+    }
+
     pub fn navigate_to(&mut self, new_path: String) {
         if self.current_path != new_path {
             // Track recent directories (keep last 20, no duplicates)
@@ -67,13 +90,14 @@ impl PaneState {
             }
 
             self.history_back.push(self.current_path.clone());
+            // Cap navigation history: unbounded back/forward stacks would
+            // otherwise grow for the lifetime of the session.
+            if self.history_back.len() > 100 {
+                let excess = self.history_back.len() - 100;
+                self.history_back.drain(..excess);
+            }
             self.history_forward.clear();
-            self.current_path = new_path.clone();
-            self.path_input_buffer = new_path;
-            self.selected_items.clear();
-            self.focused_index = None;
-            self.filter.clear();
-            self.filter_active = false;
+            self.set_path(new_path);
         }
     }
 
@@ -93,12 +117,7 @@ impl PaneState {
     pub fn go_back(&mut self) -> bool {
         if let Some(prev) = self.history_back.pop() {
             self.history_forward.push(self.current_path.clone());
-            self.current_path = prev.clone();
-            self.path_input_buffer = prev;
-            self.selected_items.clear();
-            self.focused_index = None;
-            self.filter.clear();
-            self.filter_active = false;
+            self.set_path(prev);
             true
         } else {
             false
@@ -108,12 +127,7 @@ impl PaneState {
     pub fn go_forward(&mut self) -> bool {
         if let Some(next) = self.history_forward.pop() {
             self.history_back.push(self.current_path.clone());
-            self.current_path = next.clone();
-            self.path_input_buffer = next;
-            self.selected_items.clear();
-            self.focused_index = None;
-            self.filter.clear();
-            self.filter_active = false;
+            self.set_path(next);
             true
         } else {
             false
@@ -131,7 +145,7 @@ impl PaneState {
 
     pub fn select_all(&mut self) {
         self.selected_items.clear();
-        for entry in &self.entries {
+        for entry in self.entries.iter() {
             self.selected_items.insert(entry.name.clone());
         }
     }
@@ -258,21 +272,29 @@ impl PaneState {
             .collect()
     }
 
-    pub fn stats(&self) -> (usize, usize, u64, usize, u64) {
+    /// Recomputes directory/file counts and total bytes from the current
+    /// listing. Called whenever entries are refreshed; `stats()` reuses it.
+    pub fn refresh_totals(&mut self) {
         let mut dir_count = 0;
         let mut file_count = 0;
         let mut total_size = 0;
-        let mut selected_count = 0;
-        let mut selected_size = 0;
-
-        for entry in &self.entries {
+        for entry in self.entries.iter() {
             if entry.is_dir() {
                 dir_count += 1;
             } else {
                 file_count += 1;
                 total_size += entry.metadata.size;
             }
+        }
+        self.cached_totals = (dir_count, file_count, total_size);
+    }
 
+    pub fn stats(&self) -> (usize, usize, u64, usize, u64) {
+        let (dir_count, file_count, total_size) = self.cached_totals;
+        let mut selected_count = 0;
+        let mut selected_size = 0;
+
+        for entry in self.entries.iter() {
             if self.selected_items.contains(&entry.name) {
                 selected_count += 1;
                 if !entry.is_dir() {
@@ -292,28 +314,28 @@ mod tests {
     use std::path::PathBuf;
 
     fn make_test_entry(name: &str, is_dir: bool) -> FileEntry {
-        FileEntry {
-            name: name.to_string(),
-            path: PathBuf::from(name),
-            kind: if is_dir { FileKind::Directory } else { FileKind::File },
-            extension: if is_dir { String::new() } else { "txt".to_string() },
-            metadata: FileMetadata {
+        FileEntry::new(
+            name.to_string(),
+            PathBuf::from(name),
+            if is_dir { FileKind::Directory } else { FileKind::File },
+            FileMetadata {
                 size: 100,
                 modified: None,
                 is_readonly: false,
                 permissions_str: "rw-r--r--".to_string(),
             },
-        }
+            if is_dir { String::new() } else { "txt".to_string() },
+        )
     }
 
     #[test]
     fn test_keyboard_navigation() {
         let mut pane = PaneState::new(PaneId::Left, false, "/tmp".to_string());
-        pane.entries = vec![
+        pane.entries = Arc::new(vec![
             make_test_entry("file1.txt", false),
             make_test_entry("file2.txt", false),
             make_test_entry("file3.txt", false),
-        ];
+        ]);
 
         // select_first
         assert_eq!(pane.select_first(), Some(0));
@@ -343,12 +365,12 @@ mod tests {
     #[test]
     fn test_range_selection() {
         let mut pane = PaneState::new(PaneId::Left, false, "/tmp".to_string());
-        pane.entries = vec![
+        pane.entries = Arc::new(vec![
             make_test_entry("file1.txt", false),
             make_test_entry("file2.txt", false),
             make_test_entry("file3.txt", false),
             make_test_entry("file4.txt", false),
-        ];
+        ]);
 
         pane.set_single_selection("file1.txt", 0);
         pane.select_range_to(2);
@@ -358,5 +380,34 @@ mod tests {
         assert!(pane.selected_items.contains("file2.txt"));
         assert!(pane.selected_items.contains("file3.txt"));
         assert!(!pane.selected_items.contains("file4.txt"));
+    }
+
+    #[test]
+    fn test_cached_crumbs_follow_navigation() {
+        let mut pane = PaneState::new(PaneId::Left, false, "/a".to_string());
+        assert!(pane.cached_crumbs.iter().any(|c| c.path == "/a"));
+        pane.navigate_to("/a/b".to_string());
+        assert!(pane.cached_crumbs.iter().any(|c| c.path == "/a/b"));
+        assert!(pane.go_back());
+        assert!(pane.cached_crumbs.iter().any(|c| c.path == "/a"));
+        assert!(!pane.cached_crumbs.iter().any(|c| c.path == "/a/b"));
+    }
+
+    #[test]
+    fn test_cached_totals_refresh() {
+        let mut pane = PaneState::new(PaneId::Left, false, "/tmp".to_string());
+        assert_eq!(pane.cached_totals, (0, 0, 0));
+        pane.entries = Arc::new(vec![
+            make_test_entry("d", true),
+            make_test_entry("f.txt", false),
+        ]);
+        pane.refresh_totals();
+        let (dirs, files, size, sel, selsize) = pane.stats();
+        assert_eq!((dirs, files), (1, 1));
+        assert_eq!(size, 100);
+        assert_eq!((sel, selsize), (0, 0));
+        pane.set_single_selection("f.txt", 1);
+        let (_, _, _, sel2, selsize2) = pane.stats();
+        assert_eq!((sel2, selsize2), (1, 100));
     }
 }

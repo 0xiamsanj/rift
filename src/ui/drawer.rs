@@ -7,15 +7,15 @@ use crate::ui::icons::Icons;
 use crate::ui::tooltip::tooltip_view;
 
 impl RiftApp {
-    pub fn render_transfer_drawer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_transfer_drawer(&self, cx: &mut Context<Self>) -> Div {
         let items = &self.transfer_items;
 
         div()
             .flex()
             .flex_col()
-            .h(px(180.0))
+            .h(px(200.0))
             .overflow_hidden()
-            .bg(self.theme.bg_pane)
+            .bg(self.theme.surface_background)
             .border_t_1()
             .border_color(self.theme.border)
             .child(
@@ -23,9 +23,9 @@ impl RiftApp {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .h(px(32.0))
                     .px_3()
-                    .py_2()
-                    .bg(self.theme.bg_toolbar)
+                    .bg(self.theme.toolbar_background)
                     .border_b_1()
                     .border_color(self.theme.border)
                     .child(
@@ -35,19 +35,19 @@ impl RiftApp {
                             .gap_2()
                             .child(
                                 div()
-                                    .font_weight(FontWeight::BOLD)
+                                    .font_weight(FontWeight::NORMAL)
                                     .text_size(self.theme.font_size_ui)
-                                    .child("TRANSFERS"),
+                                    .child("Transfers"),
                             )
                             .child(
                                 div()
                                     .px_2()
                                     .py(px(1.0))
                                     .rounded_full()
-                                    .bg(if !items.is_empty() { self.theme.bg_badge_accent } else { self.theme.bg_input })
+                                    .bg(if !items.is_empty() { self.theme.bg_badge_accent } else { self.theme.element_background })
                                     .font_family(self.theme.font_mono)
                                     .text_size(self.theme.font_size_caption)
-                                    .font_weight(FontWeight::BOLD)
+                                    .font_weight(FontWeight::NORMAL)
                                     .text_color(if !items.is_empty() { self.theme.accent } else { self.theme.text_muted })
                                     .child(format!("{} queue", items.len())),
                             ),
@@ -63,14 +63,14 @@ impl RiftApp {
                                     .cursor_pointer()
                                     .px_2()
                                     .py(px(2.0))
-                                    .rounded_sm()
-                                    .bg(self.theme.bg_input)
+                                    .rounded_md()
+                                    .bg(self.theme.element_background)
                                     .border_1()
                                     .border_color(self.theme.border)
-                                    .hover(|s| s.bg(self.theme.bg_row_hover))
+                                    .hover(|s| s.bg(self.theme.ghost_element_hover))
                                     .text_size(self.theme.font_size_caption)
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(self.theme.text_secondary)
+                                    .font_weight(FontWeight::NORMAL)
+                                    .text_color(self.theme.text_muted)
                                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
                                         this.transfer_manager.clear_completed();
                                         this.transfer_items.retain(|i| {
@@ -90,9 +90,10 @@ impl RiftApp {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .rounded_sm()
-                                    .hover(|s| s.bg(self.theme.bg_row_hover))
+                                    .rounded_md()
+                                    .hover(|s| s.bg(self.theme.ghost_element_hover))
                                     .text_size(self.theme.font_size_ui)
+                                    .font_family(Icons::FAMILY)
                                     .text_color(self.theme.text_muted)
                                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
                                         this.show_transfer_drawer = false;
@@ -124,7 +125,7 @@ impl RiftApp {
                         let pct_int = (ratio * 100.0) as u32;
 
                         let (state_bg, state_color, state_str) = match &item.state {
-                            TransferState::Queued => (self.theme.bg_input, self.theme.text_muted, "Queued".to_string()),
+                            TransferState::Queued => (self.theme.element_background, self.theme.text_muted, "Queued".to_string()),
                             TransferState::Running => (
                                 self.theme.bg_badge_accent,
                                 self.theme.accent,
@@ -132,7 +133,7 @@ impl RiftApp {
                             ),
                             TransferState::Completed => (self.theme.bg_badge_success, self.theme.success, format!("Completed {}", Icons::CHECK)),
                             TransferState::Failed(err) => (self.theme.bg_badge_danger, self.theme.danger, format!("Failed: {err}")),
-                            TransferState::Cancelled => (self.theme.bg_input, self.theme.text_muted, "Cancelled".to_string()),
+                            TransferState::Cancelled => (self.theme.element_background, self.theme.text_muted, "Cancelled".to_string()),
                         };
 
                         let bar_color = match &item.state {
@@ -146,8 +147,8 @@ impl RiftApp {
                             .flex_col()
                             .gap_1()
                             .p_2()
-                            .rounded_sm()
-                            .bg(self.theme.bg_card)
+                            .rounded_lg()
+                            .bg(self.theme.panel_background)
                             .border_1()
                             .border_color(self.theme.border)
                             .child(
@@ -161,21 +162,22 @@ impl RiftApp {
                                             .items_center()
                                             .gap_2()
                                             .flex_1()
+                                            .overflow_hidden()
                                             .child(
                                                 div()
                                                     .text_size(self.theme.font_size_body)
-                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .font_weight(FontWeight::NORMAL)
                                                     .child(item.name.clone()),
                                             )
                                             .child(
                                                 div()
                                                     .px_2()
                                                     .py(px(1.0))
-                                                    .rounded_sm()
-                                                    .bg(self.theme.bg_input)
+                                                    .rounded_md()
+                                                    .bg(self.theme.element_background)
                                                     .font_family(self.theme.font_mono)
                                                     .text_size(self.theme.font_size_caption)
-                                                    .text_color(self.theme.text_secondary)
+                                                    .text_color(self.theme.text_muted)
                                                     .child(dir_arrow),
                                             ),
                                     )
@@ -195,18 +197,27 @@ impl RiftApp {
                                                         format_bytes(item.total_bytes)
                                                     )),
                                             )
-                                            .child(
-                                                div()
+                                            .child({
+                                                let pill = div()
                                                     .px_2()
                                                     .py(px(1.0))
-                                                    .rounded_sm()
+                                                    .rounded_md()
                                                     .bg(state_bg)
                                                     .font_family(self.theme.font_mono)
                                                     .text_size(self.theme.font_size_mono)
-                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .font_weight(FontWeight::NORMAL)
                                                     .text_color(state_color)
-                                                    .child(state_str),
-                                            )
+                                                    .child(state_str);
+                                                if matches!(item.state, TransferState::Running) {
+                                                    crate::ui::motion::pulse(
+                                                        self.animations_enabled,
+                                                        pill,
+                                                        ElementId::Name(format!("transfer-running-{}", item.id).into()),
+                                                    )
+                                                } else {
+                                                    pill.into_any_element()
+                                                }
+                                            })
                                             .when(matches!(item.state, TransferState::Running | TransferState::Queued), |el| {
                                                 el.child(
                                                     div()
@@ -214,14 +225,14 @@ impl RiftApp {
                                                         .cursor_pointer()
                                                         .px_2()
                                                         .py(px(1.0))
-                                                        .rounded_sm()
-                                                        .bg(self.theme.bg_input)
+                                                        .rounded_md()
+                                                        .bg(self.theme.element_background)
                                                         .border_1()
                                                         .border_color(self.theme.danger)
                                                         .text_size(self.theme.font_size_caption)
-                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .font_weight(FontWeight::NORMAL)
                                                         .text_color(self.theme.danger)
-                                                        .hover(|s| s.bg(self.theme.danger).text_color(self.theme.text_primary))
+                                                        .hover(|s| s.bg(self.theme.danger).text_color(self.theme.text))
                                                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
                                                             this.transfer_manager.cancel_transfer(&id_clone);
                                                             cx.notify();
@@ -235,10 +246,10 @@ impl RiftApp {
                             // scales with the drawer width instead of a fixed px).
                             .child(
                                 div()
-                                    .h(px(4.0))
+                                    .h(px(3.0))
                                     .w_full()
                                     .rounded_full()
-                                    .bg(self.theme.bg_input)
+                                    .bg(self.theme.element_background)
                                     .overflow_hidden()
                                     .child(
                                         div()

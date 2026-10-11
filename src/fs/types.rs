@@ -23,27 +23,56 @@ pub struct FileEntry {
     pub path: PathBuf,
     pub kind: FileKind,
     pub metadata: FileMetadata,
+    /// Lowercased extension, computed once at load so sorting and icon
+    /// lookup never allocate per comparison.
     pub extension: String,
+    /// Pre-formatted at load time so row rendering is a cheap clone
+    /// rather than a format + allocation per frame.
+    pub size_str: String,
+    pub modified_str: String,
 }
 
 impl FileEntry {
+    /// Builds an entry, pre-formatting display strings once so row
+    /// rendering never formats per frame. `extension` must already be
+    /// lowercased (or empty for directories).
+    pub fn new(
+        name: String,
+        path: PathBuf,
+        kind: FileKind,
+        metadata: FileMetadata,
+        extension: String,
+    ) -> Self {
+        let size_str = if kind == FileKind::Directory {
+            "<DIR>".to_string()
+        } else {
+            format_bytes(metadata.size)
+        };
+        let modified_str = match metadata.modified {
+            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            None => "-".to_string(),
+        };
+        Self {
+            name,
+            path,
+            kind,
+            metadata,
+            extension,
+            size_str,
+            modified_str,
+        }
+    }
+
     pub fn is_dir(&self) -> bool {
         self.kind == FileKind::Directory
     }
 
     pub fn formatted_size(&self) -> String {
-        if self.is_dir() {
-            "<DIR>".to_string()
-        } else {
-            format_bytes(self.metadata.size)
-        }
+        self.size_str.clone()
     }
 
     pub fn formatted_modified(&self) -> String {
-        match self.metadata.modified {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
-            None => "-".to_string(),
-        }
+        self.modified_str.clone()
     }
 }
 

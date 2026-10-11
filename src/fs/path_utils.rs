@@ -171,6 +171,30 @@ pub fn build_breadcrumbs(path_str: &str, is_remote: bool) -> Vec<BreadcrumbItem>
     crumbs
 }
 
+/// Builds the OS-native "open with default application" command for a path:
+/// `xdg-open` on Linux/BSD, `open` on macOS, `start` on Windows.
+/// Arguments (never a shell string) so paths with spaces are safe.
+pub fn default_open_command(path: &str) -> std::process::Command {
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", "start", "", path]);
+        cmd
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg(path);
+        cmd
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(path);
+        cmd
+    }
+}
+
 /// Detects available drives on Windows (e.g. `["C:\\", "D:\\"]`) or roots on Unix (`["/"]`).
 pub fn list_system_roots() -> Vec<String> {
     #[cfg(windows)]

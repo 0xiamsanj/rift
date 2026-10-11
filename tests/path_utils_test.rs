@@ -1,6 +1,6 @@
 use rift::fs::path_utils::{
-    build_breadcrumbs, get_parent_path, is_valid_filename, join_path, list_system_roots,
-    normalize_path,
+    build_breadcrumbs, default_open_command, get_parent_path, is_valid_filename, join_path,
+    list_system_roots, normalize_path,
 };
 
 #[test]
@@ -115,4 +115,18 @@ fn test_valid_filename() {
 fn test_list_system_roots() {
     let roots = list_system_roots();
     assert!(!roots.is_empty());
+}
+
+#[test]
+fn test_default_open_command() {
+    // Never launches anything: only inspects the constructed command.
+    let cmd = default_open_command("/tmp/some file with spaces.txt");
+    #[cfg(target_os = "windows")]
+    assert_eq!(cmd.get_program(), "cmd");
+    #[cfg(target_os = "macos")]
+    assert_eq!(cmd.get_program(), "open");
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    assert_eq!(cmd.get_program(), "xdg-open");
+    let args: Vec<_> = cmd.get_args().collect();
+    assert!(args.iter().any(|a| *a == "/tmp/some file with spaces.txt"));
 }

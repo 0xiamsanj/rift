@@ -1,9 +1,12 @@
 pub mod context_menu;
 pub mod context_menu_view;
+pub mod controls;
 pub mod dialogs;
 pub mod drawer;
 pub mod icons;
 pub mod modals;
+pub mod motion;
+pub mod palette;
 pub mod pane_state;
 pub mod pane_view;
 pub mod status_bar;

@@ -30,18 +30,18 @@ impl Render for TooltipView {
             .flex()
             .items_center()
             .gap(px(6.0))
-            .px(px(6.0))
-            .py(px(2.5))
+            .px(px(8.0))
+            .py(px(4.0))
             .rounded(px(4.0))
-            .bg(theme.bg_modal)
+            .bg(theme.elevated_surface_background)
             .border_1()
             .border_color(theme.border)
             .shadow_md()
             .child(
                 div()
                     .font_family(theme.font_ui)
-                    .text_color(theme.text_primary)
-                    .text_size(theme.font_size_caption)
+                    .text_color(theme.text)
+                    .text_size(theme.font_size_ui)
                     .child(self.text.clone()),
             )
             .when_some(self.shortcut.clone(), |el, sc| {
@@ -55,7 +55,7 @@ impl Render for TooltipView {
                         .border_color(theme.keycap_border)
                         .font_family(theme.font_mono)
                         .text_color(theme.keycap_text)
-                        .text_size(px(10.0))
+                        .text_size(theme.font_size_shortcut)
                         .child(sc),
                 )
             })

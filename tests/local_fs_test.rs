@@ -78,18 +78,18 @@ fn test_local_fs_file_operations() {
 }
 
 fn make_entry(name: &str, size: u64) -> FileEntry {
-    FileEntry {
-        name: name.to_string(),
-        path: PathBuf::from(name),
-        kind: FileKind::File,
-        metadata: FileMetadata {
+    FileEntry::new(
+        name.to_string(),
+        PathBuf::from(name),
+        FileKind::File,
+        FileMetadata {
             size,
             modified: None,
             is_readonly: false,
             permissions_str: "644".to_string(),
         },
-        extension: "txt".to_string(),
-    }
+        "txt".to_string(),
+    )
 }
 
 #[test]

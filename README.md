@@ -9,10 +9,12 @@ Left pane browses the local filesystem; right pane browses a remote server over 
 - Dual-pane local/remote browsing with breadcrumbs, history, and quick path jump
 - Sorting (name, extension, size, modified, permissions), filtering, hidden-file toggle
 - Upload/download queue with progress, speed, cancellation, and retry-friendly errors
+- Open files in the OS default application (`Enter`); remote files open via a temp download
 - SSH host-key verification with explicit trust flow (no silent auto-trust, no trust-on-mismatch)
 - Saved connection profiles; passwords only in the OS credential store, never in config files
-- Session and persistent bookmarks, guarded for disconnected remote targets
-- Keyboard-first: command palette, shortcuts, context menus with accurate hints
+- Session and persistent bookmarks for directories, guarded for disconnected remote targets
+- Keyboard-first: fuzzy command palette with grouped results and match highlighting, shortcuts, context menus with accurate hints
+- Subtle interface motion (dialog/menu/drawer entrances, pane-switch flash, activity pulses, status flashes) with a palette toggle for reduced-motion users
 
 ## Architecture
 
@@ -36,6 +38,7 @@ Left pane browses the local filesystem; right pane browses a remote server over 
 | `F7` | New folder |
 | `F8` / `Delete` / `Shift+Backspace` | Delete selected |
 | `F2` | Rename |
+| `Alt+Enter` | Properties |
 | `Ctrl+P` / `F1` | Command palette |
 | `Ctrl+F` / `/` | Filter files |
 | `Ctrl+L` | Edit path |
@@ -51,7 +54,7 @@ Left pane browses the local filesystem; right pane browses a remote server over 
 | `Alt+Left` / `Alt+Right` | Back / forward |
 | `↑` / `↓` (+`Shift`) | Move cursor (extend selection) |
 | `Home` / `End` / `PgUp` / `PgDn` | Jump |
-| `Enter` | Open directory |
+| `Enter` | Open file / navigate into directory |
 
 ## Benchmarks
 
@@ -107,12 +110,27 @@ A decorate-sort-undecorate variant was tried and reverted: its setup allocations
 
 Loopback numbers measure protocol + client overhead (64 KiB chunks, per-chunk progress callback), not network speed. Downloads trail uploads here due to synchronous per-chunk progress dispatch; both saturate typical broadband many times over. WAN numbers depend on latency/bandwidth and are left for operators to measure — see `docs`/reproduce method above.
 
+File lists are virtualized (`uniform_list`): only visible 22px rows are
+built, so scrolling stays smooth into the tens of thousands of entries.
+Listings snapshot via `Arc` (no per-frame copies), footers read cached
+totals, breadcrumbs are cached per navigation, and row sizes/dates are
+pre-formatted at load. Transfer progress events are rate-limited to ~10/s
+so fast transfers can't repaint-storm the UI. Local listings run off the
+UI thread; remote listings time out after 30 s instead of spinning forever.
+Two concurrent transfers genuinely overlap (measured 1.6× vs serial on
+loopback) via a pooled-session design; the shared session remains as a
+serial fallback. Transfer history auto-prunes to the 50 most-recent
+finished items.
+Interface motion is opacity-only with no layout work per frame, and no
+repeating animation runs while idle — except activity-bound pulses
+(loading, connecting, running transfers), which stop with their state.
+
 ### Build & test
 
 | Metric | Value |
 |---|---|
 | Cold `cargo build` (wall, 8 cores, loaded box) | 2 m 07 s |
-| Warm `cargo test` (26 tests) | ~0.5 s |
+| Warm `cargo test` (42 tests) | ~0.5 s |
 | Debug binary size | ~543 MB (GPUI + deps, unoptimized; release stripping not measured yet) |
 | Clippy | 0 warnings (`cargo clippy --all-targets`) |
 
@@ -138,7 +156,7 @@ Loopback numbers measure protocol + client overhead (64 KiB chunks, per-chunk pr
 - Local copies never silently overwrite: existing destinations and directories are skipped and counted in the status message.
 - Remote operations validate paths; failures report per-file errors instead of vanishing.
 - Cancellation aborts worker loops promptly; a cancelled item stays `Cancelled` even if the worker was mid-completion.
-- Concurrency is bounded (default 2) via semaphore; queued items wait instead of thundering the server.
+- Concurrency is bounded (default 2) via semaphore; queued items wait instead of thundering the server. Concurrent transfers use dedicated pooled SSH sessions; password-less auth (agent, key, OS-stored secret) enables true overlap, otherwise the shared session serializes safely.
 
 ## Getting started
 
@@ -146,10 +164,14 @@ Prerequisites: Rust stable (1.88+ for let-chains-era syntax used in deps), syste
 
 ```sh
 cargo build        # debug binary at target/debug/rift
-cargo run          # launch the app
-cargo test         # 26 tests, offline, no server needed
+cargo run          # launch the app (debug; see note below)
+cargo run --release  # smooth UI: debug builds skip optimizations and scroll/animate visibly worse
+cargo test         # 42 tests, offline, no server needed
 cargo clippy --all-targets  # must stay at 0 warnings
 ```
+
+Fonts: IBM Plex Sans (UI) + IBM Plex Mono (technical text), both verified
+via fontconfig with per-glyph fallback for symbols Plex lacks.
 
 Connect: `+ Connect SFTP` (or `Ctrl+P` → *Connect to SFTP Server*), pick password / private key / SSH agent auth, verify the host key on first connect. `F5` transfers the selection to the opposite pane.
 
