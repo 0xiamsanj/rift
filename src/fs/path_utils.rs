@@ -23,7 +23,11 @@ pub fn normalize_path(raw: &str) -> String {
     let is_unc = (raw.starts_with(r"\\") || raw.starts_with("//")) && raw.len() > 2;
 
     if is_unc {
-        let normalized = raw.replace('/', r"\");
+        let mut normalized = raw.replace('/', r"\");
+        // Collapse duplicate separators past the leading UNC prefix.
+        while normalized[2..].contains(r"\\") {
+            normalized = format!(r"\\{}", normalized[2..].replace(r"\\", r"\"));
+        }
         return normalized;
     }
 
@@ -129,8 +133,29 @@ pub fn build_breadcrumbs(path_str: &str, is_remote: bool) -> Vec<BreadcrumbItem>
         for (i, comp) in components.iter().enumerate() {
             current.push(comp.as_os_str());
             let label = match comp {
-                Component::Prefix(prefix) => prefix.as_os_str().to_string_lossy().to_string(),
-                Component::RootDir => "/".to_string(),
+                // Merge a Windows drive prefix with its root separator so the
+                // breadcrumb shows a single "C:\" crumb instead of "C:" + "/".
+                // The merged crumb is emitted at the RootDir step, where the
+                // accumulated path ("C:\") is already correct.
+                Component::Prefix(prefix) => {
+                    if let Some(Component::RootDir) = components.get(i + 1) {
+                        continue;
+                    }
+                    prefix.as_os_str().to_string_lossy().to_string()
+                }
+                Component::RootDir => {
+                    if let Some(Component::Prefix(prefix)) =
+                        components.get(i.wrapping_sub(1))
+                    {
+                        format!(
+                            "{}{}",
+                            prefix.as_os_str().to_string_lossy(),
+                            std::path::MAIN_SEPARATOR
+                        )
+                    } else {
+                        "/".to_string()
+                    }
+                }
                 Component::CurDir => ".".to_string(),
                 Component::ParentDir => "..".to_string(),
                 Component::Normal(name) => name.to_string_lossy().to_string(),

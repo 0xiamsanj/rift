@@ -4,6 +4,7 @@ use uuid::Uuid;
 use crate::app::RiftApp;
 use crate::bookmarks::{Bookmark, BookmarkStore};
 use crate::fs::types::format_bytes;
+use crate::remote::profile::ProfileStore;
 use crate::ui::icons::Icons;
 use crate::ui::modals::{
     ActiveModal, AddBookmarkModalState, CommandPaletteModalState, ConfirmDeleteModalState,
@@ -135,7 +136,7 @@ impl RiftApp {
                                         div()
                                             .text_size(self.theme.font_size_caption)
                                             .text_color(if is_sel { self.theme.accent } else { self.theme.text_muted })
-                                            .child(if is_sel { "▶" } else { " " }),
+                                            .child(if is_sel { Icons::PLAY } else { " " }),
                                     )
                                     .child(
                                         div()
@@ -172,7 +173,7 @@ impl RiftApp {
         div()
             .flex()
             .flex_col()
-            .w(px(460.0))
+            .w(self.theme.modal_w_md)
             .p_4()
             .rounded_md()
             .bg(self.theme.bg_modal)
@@ -206,7 +207,7 @@ impl RiftApp {
                     .child(
                         div()
                             .id("btn-modal-close")
-                            .tooltip(tooltip_view("Close", Some("Esc")))
+                            .tooltip(tooltip_view(self.theme, "Close", Some("Esc")))
                             .cursor_pointer()
                             .w(px(22.0))
                             .h(px(22.0))
@@ -216,11 +217,12 @@ impl RiftApp {
                             .rounded_sm()
                             .hover(|s| s.bg(self.theme.bg_row_hover))
                             .text_size(self.theme.font_size_ui)
+                            .text_color(self.theme.text_muted)
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
                                 this.modal = ActiveModal::None;
                                 cx.notify();
                             }))
-                            .child("✕"),
+                            .child(Icons::CLOSE),
                     ),
             )
             .when(!profiles.is_empty(), |el| {
@@ -236,19 +238,24 @@ impl RiftApp {
                                 .gap_1()
                                 .children(profiles.into_iter().map(|p| {
                                     let p_clone = p.clone();
+                                    let pid_del = p.id.clone();
+                                    let is_sel = state.selected_profile_id.as_deref() == Some(p.id.as_str());
                                     div()
                                         .id(ElementId::Name(format!("select-prof-{}", p.id).into()))
                                         .cursor_pointer()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1()
                                         .px_2()
                                         .py_1()
                                         .rounded_sm()
-                                        .bg(self.theme.bg_input)
+                                        .bg(if is_sel { self.theme.bg_badge_accent } else { self.theme.bg_input })
                                         .border_1()
-                                        .border_color(self.theme.border)
+                                        .border_color(if is_sel { self.theme.accent } else { self.theme.border })
                                         .hover(|s| s.border_color(self.theme.accent))
                                         .text_size(self.theme.font_size_caption)
                                         .font_weight(FontWeight::MEDIUM)
-                                        .text_color(self.theme.text_secondary)
+                                        .text_color(if is_sel { self.theme.accent } else { self.theme.text_secondary })
                                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
                                             if let ActiveModal::Connect(ref mut s) = this.modal {
                                                 s.host_input = p_clone.host.clone();
@@ -259,6 +266,29 @@ impl RiftApp {
                                             cx.notify();
                                         }))
                                         .child(p.name)
+                                        .child(
+                                            div()
+                                                .id(ElementId::Name(format!("del-prof-{}", pid_del).into()))
+                                                .tooltip(tooltip_view(self.theme, "Delete Profile", None::<&str>))
+                                                .cursor_pointer()
+                                                .px_1()
+                                                .rounded_sm()
+                                                .hover(|s| s.text_color(self.theme.danger))
+                                                .text_size(px(10.0))
+                                                .text_color(self.theme.text_muted)
+                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                                    let _ = ProfileStore::delete_profile(&pid_del);
+                                                    if let ActiveModal::Connect(ref mut s) = this.modal {
+                                                        s.profiles.retain(|x| x.id != pid_del);
+                                                        if s.selected_profile_id.as_deref() == Some(pid_del.as_str()) {
+                                                            s.selected_profile_id = None;
+                                                        }
+                                                    }
+                                                    cx.stop_propagation();
+                                                    cx.notify();
+                                                }))
+                                                .child(Icons::CLOSE),
+                                        )
                                 })),
                         ),
                 )
@@ -366,30 +396,176 @@ impl RiftApp {
                                     .child(if state.username_input.is_empty() { "username| ".to_string() } else { format!("{}|", state.username_input) }),
                             ),
                     )
-                    // Password
+                    // Auth method selector (wires the previously dead auth_type state)
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .child(div().text_size(self.theme.font_size_caption).text_color(self.theme.text_muted).child("Password:"))
+                            .child(div().text_size(self.theme.font_size_caption).text_color(self.theme.text_muted).child("Authentication:"))
                             .child(
                                 div()
-                                    .id("input-connect-pass")
+                                    .flex()
+                                    .gap_1()
+                                    .children([("Password", 0), ("Private Key", 1), ("SSH Agent", 2)].into_iter().map(|(label, idx)| {
+                                        let is_sel = state.auth_type == idx;
+                                        div()
+                                            .id(ElementId::Name(format!("auth-type-{}", idx).into()))
+                                            .cursor_pointer()
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_sm()
+                                            .bg(if is_sel { self.theme.bg_badge_accent } else { self.theme.bg_input })
+                                            .border_1()
+                                            .border_color(if is_sel { self.theme.accent } else { self.theme.border })
+                                            .hover(|s| s.border_color(self.theme.accent))
+                                            .text_size(self.theme.font_size_caption)
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(if is_sel { self.theme.accent } else { self.theme.text_secondary })
+                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
+                                                if let ActiveModal::Connect(ref mut s) = this.modal {
+                                                    s.auth_type = idx;
+                                                    s.focused_field = 3;
+                                                }
+                                                cx.notify();
+                                            }))
+                                            .child(label)
+                                    })),
+                            ),
+                    )
+                    // Password (only for password auth)
+                    .when(state.auth_type == 0, |el| {
+                        el.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(div().text_size(self.theme.font_size_caption).text_color(self.theme.text_muted).child("Password:"))
+                                .child(
+                                    div()
+                                        .id("input-connect-pass")
+                                        .cursor_pointer()
+                                        .p_2()
+                                        .rounded_sm()
+                                        .bg(self.theme.bg_input)
+                                        .border_1()
+                                        .border_color(if state.focused_field == 3 { self.theme.accent } else { self.theme.border })
+                                        .font_family(self.theme.font_mono)
+                                        .text_size(self.theme.font_size_body)
+                                        .text_color(self.theme.text_primary)
+                                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
+                                            if let ActiveModal::Connect(ref mut s) = this.modal { s.focused_field = 3; }
+                                            cx.notify();
+                                        }))
+                                        .child(if state.password_input.is_empty() { "••••••••| ".to_string() } else { "•".repeat(state.password_input.len()) + "|" }),
+                                ),
+                        )
+                    })
+                    // Key path (only for private-key auth)
+                    .when(state.auth_type == 1, |el| {
+                        el.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(div().text_size(self.theme.font_size_caption).text_color(self.theme.text_muted).child("Private Key Path:"))
+                                .child(
+                                    div()
+                                        .id("input-connect-keypath")
+                                        .cursor_pointer()
+                                        .p_2()
+                                        .rounded_sm()
+                                        .bg(self.theme.bg_input)
+                                        .border_1()
+                                        .border_color(if state.focused_field == 3 { self.theme.accent } else { self.theme.border })
+                                        .font_family(self.theme.font_mono)
+                                        .text_size(self.theme.font_size_body)
+                                        .text_color(self.theme.text_primary)
+                                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
+                                            if let ActiveModal::Connect(ref mut s) = this.modal { s.focused_field = 3; }
+                                            cx.notify();
+                                        }))
+                                        .child(if state.key_path_input.is_empty() { "~/.ssh/id_rsa| ".to_string() } else { format!("{}|", state.key_path_input) }),
+                                ),
+                        )
+                    })
+                    // Agent note (no secret needed)
+                    .when(state.auth_type == 2, |el| {
+                        el.child(
+                            div()
+                                .p_2()
+                                .rounded_sm()
+                                .bg(self.theme.bg_badge_accent)
+                                .text_size(self.theme.font_size_caption)
+                                .text_color(self.theme.text_secondary)
+                                .child("Uses keys offered by your local SSH agent. No password needed."),
+                        )
+                    })
+                    // Remember credentials + profile name (wires the dead state fields)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .id("toggle-remember-creds")
+                                    .cursor_pointer()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
+                                        if let ActiveModal::Connect(ref mut s) = this.modal {
+                                            s.remember_credentials = !s.remember_credentials;
+                                        }
+                                        cx.notify();
+                                    }))
+                                    .child(
+                                        div()
+                                            .w(px(13.0))
+                                            .h(px(13.0))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded_sm()
+                                            .bg(if state.remember_credentials { self.theme.accent } else { self.theme.bg_input })
+                                            .border_1()
+                                            .border_color(if state.remember_credentials { self.theme.accent } else { self.theme.border })
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(0xffffff))
+                                            .child(if state.remember_credentials { Icons::CHECK } else { "" }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(self.theme.font_size_caption)
+                                            .text_color(self.theme.text_secondary)
+                                            .child("Remember credentials"),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(div().text_size(self.theme.font_size_caption).text_color(self.theme.text_muted).child("Save as profile (optional):"))
+                            .child(
+                                div()
+                                    .id("input-connect-profile-name")
                                     .cursor_pointer()
                                     .p_2()
                                     .rounded_sm()
                                     .bg(self.theme.bg_input)
                                     .border_1()
-                                    .border_color(if state.focused_field == 3 { self.theme.accent } else { self.theme.border })
+                                    .border_color(if state.focused_field == 4 { self.theme.accent } else { self.theme.border })
                                     .font_family(self.theme.font_mono)
                                     .text_size(self.theme.font_size_body)
                                     .text_color(self.theme.text_primary)
                                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
-                                        if let ActiveModal::Connect(ref mut s) = this.modal { s.focused_field = 3; }
+                                        if let ActiveModal::Connect(ref mut s) = this.modal { s.focused_field = 4; }
                                         cx.notify();
                                     }))
-                                    .child(if state.password_input.is_empty() { "••••••••| ".to_string() } else { "•".repeat(state.password_input.len()) + "|" }),
+                                    .child(if state.save_as_profile_name.is_empty() { "my-server| ".to_string() } else { format!("{}|", state.save_as_profile_name) }),
                             ),
                     ),
             )
@@ -448,7 +624,7 @@ impl RiftApp {
         div()
             .flex()
             .flex_col()
-            .w(px(360.0))
+            .w(self.theme.modal_w_sm)
             .p_4()
             .rounded_md()
             .bg(self.theme.bg_modal)
@@ -523,7 +699,7 @@ impl RiftApp {
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
                                 let submit_name = if folder_name.is_empty() { "New Folder".to_string() } else { folder_name.clone() };
                                 this.modal = ActiveModal::None;
-                                this.create_folder(pane_id, &submit_name);
+                                this.create_folder(pane_id, &submit_name, cx);
                                 cx.notify();
                             }))
                             .child("Create"),
@@ -539,7 +715,7 @@ impl RiftApp {
         div()
             .flex()
             .flex_col()
-            .w(px(360.0))
+            .w(self.theme.modal_w_sm)
             .p_4()
             .rounded_md()
             .bg(self.theme.bg_modal)
@@ -612,7 +788,7 @@ impl RiftApp {
                             .text_color(rgb(0xffffff))
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
                                 this.modal = ActiveModal::None;
-                                this.rename_entry(pane_id, &orig, &new_name);
+                                this.rename_entry(pane_id, &orig, &new_name, cx);
                                 cx.notify();
                             }))
                             .child("Rename"),
@@ -627,7 +803,7 @@ impl RiftApp {
         div()
             .flex()
             .flex_col()
-            .w(px(400.0))
+            .w(self.theme.modal_w_sm)
             .p_4()
             .rounded_md()
             .bg(self.theme.bg_modal)
@@ -643,7 +819,7 @@ impl RiftApp {
                         div()
                             .text_color(self.theme.danger)
                             .text_size(px(14.0))
-                            .child("×"),
+                            .child(Icons::DELETE),
                     )
                     .child(
                         div()
@@ -703,12 +879,12 @@ impl RiftApp {
                             .py(px(3.5))
                             .rounded_sm()
                             .bg(self.theme.danger)
-                            .hover(|s| s.bg(gpui::rgb(0xf07178)))
+                            .hover(|s| s.bg(self.theme.danger_hover))
                             .text_size(self.theme.font_size_ui)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(rgb(0xffffff))
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
-                                this.confirm_delete(pane_id, items.clone());
+                                this.confirm_delete(pane_id, items.clone(), cx);
                                 cx.notify();
                             }))
                             .child("Delete"),
@@ -724,7 +900,7 @@ impl RiftApp {
         div()
             .flex()
             .flex_col()
-            .w(px(460.0))
+            .w(self.theme.modal_w_md)
             .p_4()
             .rounded_md()
             .bg(self.theme.bg_modal)
@@ -740,7 +916,7 @@ impl RiftApp {
                     .child(
                         div()
                             .text_color(self.theme.warning)
-                            .child("▲"),
+                            .child(Icons::WARNING),
                     )
                     .child(
                         div()
@@ -810,7 +986,7 @@ impl RiftApp {
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(rgb(0xffffff))
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
-                                this.execute_connect(cx);
+                                this.trust_pending_connection(cx);
                             }))
                             .child("Trust & Connect"),
                     ),
@@ -825,7 +1001,7 @@ impl RiftApp {
         div()
             .flex()
             .flex_col()
-            .w(px(420.0))
+            .w(self.theme.modal_w_sm)
             .p_4()
             .rounded_md()
             .bg(self.theme.bg_modal)
@@ -933,7 +1109,7 @@ impl RiftApp {
                             .py(px(3.5))
                             .rounded_sm()
                             .bg(self.theme.danger)
-                            .hover(|s| s.bg(gpui::rgb(0xf07178)))
+                            .hover(|s| s.bg(self.theme.danger_hover))
                             .text_size(self.theme.font_size_ui)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(rgb(0xffffff))
@@ -948,7 +1124,10 @@ impl RiftApp {
     }
 
     pub fn render_bookmarks_dialog(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let saved_bookmarks = BookmarkStore::load_saved_bookmarks();
+        // Render from the in-memory cache: this runs every frame, so it must
+        // not touch the filesystem. The cache is refreshed when the dialog
+        // opens and after every mutation.
+        let saved_bookmarks = self.bookmark_store.cached_saved_bookmarks.clone();
         let session_bookmarks = self.bookmark_store.session_bookmarks.clone();
         let all_empty = saved_bookmarks.is_empty() && session_bookmarks.is_empty();
         let active_pane = self.active_pane;
@@ -1000,7 +1179,7 @@ impl RiftApp {
                     .child(
                         div()
                             .id("btn-close-bookmarks")
-                            .tooltip(tooltip_view("Close", Some("Esc")))
+                            .tooltip(tooltip_view(self.theme, "Close", Some("Esc")))
                             .cursor_pointer()
                             .w(px(22.0))
                             .h(px(22.0))
@@ -1010,6 +1189,7 @@ impl RiftApp {
                             .rounded_sm()
                             .hover(|s| s.bg(self.theme.bg_row_hover))
                             .text_size(self.theme.font_size_ui)
+                            .text_color(self.theme.text_muted)
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
                                 this.modal = ActiveModal::None;
                                 cx.notify();
@@ -1058,9 +1238,7 @@ impl RiftApp {
                                     .items_center()
                                     .gap_2()
                                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
-                                        this.modal = ActiveModal::None;
-                                        this.navigate_pane(active_pane, bp.clone());
-                                        cx.notify();
+                                        this.navigate_bookmark(active_pane, bp.clone(), is_rem, cx);
                                     }))
                                     .child(
                                         div()
@@ -1086,7 +1264,7 @@ impl RiftApp {
                             .child(
                                 div()
                                     .id(ElementId::Name(format!("bm-del-{}", bid).into()))
-                                    .tooltip(tooltip_view("Delete Bookmark", None::<&str>))
+                                    .tooltip(tooltip_view(self.theme, "Delete Bookmark", None::<&str>))
                                     .cursor_pointer()
                                     .w(px(20.0))
                                     .h(px(20.0))
@@ -1097,8 +1275,9 @@ impl RiftApp {
                                     .hover(|s| s.bg(self.theme.bg_badge_danger).text_color(self.theme.danger))
                                     .text_size(px(11.0))
                                     .text_color(self.theme.text_muted)
-                                    .on_mouse_down(MouseButton::Left, cx.listener(move |_this, _ev, _window, cx| {
+                                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
                                         let _ = BookmarkStore::delete_saved_bookmark(&bid);
+                                        this.bookmark_store.refresh_saved_cache();
                                         cx.notify();
                                     }))
                                     .child(Icons::DELETE)
@@ -1106,6 +1285,7 @@ impl RiftApp {
                     }))
                     .children(session_bookmarks.into_iter().map(|b| {
                         let bp = b.path.clone();
+                        let bid_del = b.id.clone();
                         let is_rem = b.is_remote;
                         div()
                             .cursor_pointer()
@@ -1117,9 +1297,7 @@ impl RiftApp {
                             .rounded_sm()
                             .hover(|s| s.bg(self.theme.bg_row_hover))
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
-                                this.modal = ActiveModal::None;
-                                this.navigate_pane(active_pane, bp.clone());
-                                cx.notify();
+                                this.navigate_bookmark(active_pane, bp.clone(), is_rem, cx);
                             }))
                             .child(
                                 div()
@@ -1149,14 +1327,41 @@ impl RiftApp {
                             )
                             .child(
                                 div()
-                                    .px_1p5()
-                                    .py(px(0.5))
-                                    .rounded_sm()
-                                    .bg(self.theme.bg_input)
-                                    .font_family(self.theme.font_mono)
-                                    .text_size(px(9.0))
-                                    .text_color(self.theme.text_muted)
-                                    .child("session"),
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .px_1p5()
+                                            .py(px(0.5))
+                                            .rounded_sm()
+                                            .bg(self.theme.bg_input)
+                                            .font_family(self.theme.font_mono)
+                                            .text_size(px(9.0))
+                                            .text_color(self.theme.text_muted)
+                                            .child("session"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(ElementId::Name(format!("bm-sess-del-{}", bid_del).into()))
+                                            .tooltip(tooltip_view(self.theme, "Delete Bookmark", None::<&str>))
+                                            .cursor_pointer()
+                                            .w(px(20.0))
+                                            .h(px(20.0))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded_sm()
+                                            .hover(|s| s.bg(self.theme.bg_badge_danger).text_color(self.theme.danger))
+                                            .text_size(px(11.0))
+                                            .text_color(self.theme.text_muted)
+                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                                this.bookmark_store.remove_session_bookmark(&bid_del);
+                                                cx.stop_propagation();
+                                                cx.notify();
+                                            }))
+                                            .child(Icons::DELETE)
+                                    )
                             )
                     }))
             )
@@ -1226,7 +1431,7 @@ impl RiftApp {
         div()
             .flex()
             .flex_col()
-            .w(px(400.0))
+            .w(self.theme.modal_w_sm)
             .p_4()
             .rounded_md()
             .bg(self.theme.bg_modal)
@@ -1339,6 +1544,7 @@ impl RiftApp {
                                         profile_id: None,
                                         is_session_only: false,
                                     });
+                                    this.bookmark_store.refresh_saved_cache();
                                 }
                                 this.modal = ActiveModal::None;
                                 this.status_message = Some(format!("Bookmarked '{}'", label));

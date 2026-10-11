@@ -31,18 +31,29 @@ pub enum TransferEvent {
 pub struct TransferManager {
     items: Arc<Mutex<Vec<TransferItem>>>,
     event_tx: mpsc::UnboundedSender<TransferEvent>,
-    _max_concurrency: usize,
+    max_concurrency: usize,
+    concurrency_limiter: Arc<tokio::sync::Semaphore>,
     cancel_tokens: Arc<Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl TransferManager {
     pub fn new(event_tx: mpsc::UnboundedSender<TransferEvent>) -> Self {
+        Self::with_max_concurrency(event_tx, 2)
+    }
+
+    pub fn with_max_concurrency(event_tx: mpsc::UnboundedSender<TransferEvent>, max: usize) -> Self {
+        let max = max.max(1);
         Self {
             items: Arc::new(Mutex::new(Vec::new())),
             event_tx,
-            _max_concurrency: 2,
+            max_concurrency: max,
+            concurrency_limiter: Arc::new(tokio::sync::Semaphore::new(max)),
             cancel_tokens: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
+    }
+
+    pub fn max_concurrency(&self) -> usize {
+        self.max_concurrency
     }
 
     pub fn get_items(&self) -> Vec<TransferItem> {
@@ -52,6 +63,10 @@ impl TransferManager {
     pub fn clear_completed(&self) {
         let mut items = self.items.lock();
         items.retain(|i| matches!(i.state, TransferState::Queued | TransferState::Running));
+        // Drop cancel tokens for finished items so the map cannot grow
+        // without bound over a long session.
+        let live: std::collections::HashSet<String> = items.iter().map(|i| i.id.clone()).collect();
+        self.cancel_tokens.lock().retain(|id, _| live.contains(id));
     }
 
     pub fn cancel_transfer(&self, id: &str) {
@@ -107,17 +122,36 @@ impl TransferManager {
 
         let items_lock = self.items.clone();
         let event_tx = self.event_tx.clone();
+        let cancel_tokens = self.cancel_tokens.clone();
+        let limiter = self.concurrency_limiter.clone();
+        let cancel_op = cancel_flag.clone();
+        let cancel_cb = cancel_flag.clone();
 
         tokio::spawn(async move {
+            // Bound concurrent transfers; the item stays Queued until a slot frees up.
+            let _permit = limiter
+                .acquire_owned()
+                .await
+                .expect("transfer semaphore closed");
+
+            // A queued item may have been cancelled while waiting for a slot.
+            if cancel_op.load(Ordering::SeqCst) {
+                cancel_tokens.lock().remove(&id);
+                return;
+            }
+
             {
                 let mut guard = items_lock.lock();
                 if let Some(it) = guard.iter_mut().find(|i| i.id == id) {
+                    if it.state != TransferState::Queued {
+                        cancel_tokens.lock().remove(&id);
+                        return;
+                    }
                     it.state = TransferState::Running;
                     it.started_at = Some(Local::now());
                 }
             }
 
-            let _start_time = Instant::now();
             let mut last_progress_time = Instant::now();
             let mut last_bytes = 0u64;
 
@@ -126,8 +160,8 @@ impl TransferManager {
             let items_lock_clone = items_lock.clone();
 
             let upload_res = remote_client
-                .upload_file(local_src, remote_dst, move |written| {
-                    if cancel_flag.load(Ordering::SeqCst) {
+                .upload_file(local_src, remote_dst, cancel_op.clone(), move |written| {
+                    if cancel_cb.load(Ordering::SeqCst) {
                         return;
                     }
                     let now = Instant::now();
@@ -162,24 +196,36 @@ impl TransferManager {
             let final_state = match upload_res {
                 Ok(_) => TransferState::Completed,
                 Err(e) => {
-                    error!("Upload failed: {e}");
-                    TransferState::Failed(e)
+                    if cancel_op.load(Ordering::SeqCst) {
+                        TransferState::Cancelled
+                    } else {
+                        error!("Upload failed: {e}");
+                        TransferState::Failed(e)
+                    }
                 }
             };
 
-            {
+            // A user cancellation wins over a racy worker completion, and the
+            // reported event always matches the stored item state.
+            let report_state = {
                 let mut guard = items_lock.lock();
-                if let Some(it) = guard.iter_mut().find(|i| i.id == id) {
-                    it.state = final_state.clone();
-                    if let TransferState::Failed(ref msg) = final_state {
-                        it.error_msg = Some(msg.clone());
+                match guard.iter_mut().find(|i| i.id == id) {
+                    Some(it) if it.state == TransferState::Cancelled => TransferState::Cancelled,
+                    Some(it) => {
+                        it.state = final_state.clone();
+                        if let TransferState::Failed(ref msg) = final_state {
+                            it.error_msg = Some(msg.clone());
+                        }
+                        final_state.clone()
                     }
+                    None => final_state.clone(),
                 }
-            }
+            };
+            cancel_tokens.lock().remove(&id);
 
             let _ = event_tx.send(TransferEvent::ItemFinished {
                 id,
-                state: final_state,
+                state: report_state,
             });
         });
     }
@@ -221,11 +267,31 @@ impl TransferManager {
 
         let items_lock = self.items.clone();
         let event_tx = self.event_tx.clone();
+        let cancel_tokens = self.cancel_tokens.clone();
+        let limiter = self.concurrency_limiter.clone();
+        let cancel_op = cancel_flag.clone();
+        let cancel_cb = cancel_flag.clone();
 
         tokio::spawn(async move {
+            // Bound concurrent transfers; the item stays Queued until a slot frees up.
+            let _permit = limiter
+                .acquire_owned()
+                .await
+                .expect("transfer semaphore closed");
+
+            // A queued item may have been cancelled while waiting for a slot.
+            if cancel_op.load(Ordering::SeqCst) {
+                cancel_tokens.lock().remove(&id);
+                return;
+            }
+
             {
                 let mut guard = items_lock.lock();
                 if let Some(it) = guard.iter_mut().find(|i| i.id == id) {
+                    if it.state != TransferState::Queued {
+                        cancel_tokens.lock().remove(&id);
+                        return;
+                    }
                     it.state = TransferState::Running;
                     it.started_at = Some(Local::now());
                 }
@@ -239,8 +305,8 @@ impl TransferManager {
             let items_lock_clone = items_lock.clone();
 
             let download_res = remote_client
-                .download_file(remote_src, local_dst, move |read_bytes| {
-                    if cancel_flag.load(Ordering::SeqCst) {
+                .download_file(remote_src, local_dst, cancel_op.clone(), move |read_bytes| {
+                    if cancel_cb.load(Ordering::SeqCst) {
                         return;
                     }
                     let now = Instant::now();
@@ -275,24 +341,36 @@ impl TransferManager {
             let final_state = match download_res {
                 Ok(_) => TransferState::Completed,
                 Err(e) => {
-                    error!("Download failed: {e}");
-                    TransferState::Failed(e)
+                    if cancel_op.load(Ordering::SeqCst) {
+                        TransferState::Cancelled
+                    } else {
+                        error!("Download failed: {e}");
+                        TransferState::Failed(e)
+                    }
                 }
             };
 
-            {
+            // A user cancellation wins over a racy worker completion, and the
+            // reported event always matches the stored item state.
+            let report_state = {
                 let mut guard = items_lock.lock();
-                if let Some(it) = guard.iter_mut().find(|i| i.id == id) {
-                    it.state = final_state.clone();
-                    if let TransferState::Failed(ref msg) = final_state {
-                        it.error_msg = Some(msg.clone());
+                match guard.iter_mut().find(|i| i.id == id) {
+                    Some(it) if it.state == TransferState::Cancelled => TransferState::Cancelled,
+                    Some(it) => {
+                        it.state = final_state.clone();
+                        if let TransferState::Failed(ref msg) = final_state {
+                            it.error_msg = Some(msg.clone());
+                        }
+                        final_state.clone()
                     }
+                    None => final_state.clone(),
                 }
-            }
+            };
+            cancel_tokens.lock().remove(&id);
 
             let _ = event_tx.send(TransferEvent::ItemFinished {
                 id,
-                state: final_state,
+                state: report_state,
             });
         });
     }

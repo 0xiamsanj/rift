@@ -3,6 +3,7 @@ use gpui::prelude::FluentBuilder;
 use crate::app::RiftApp;
 use crate::fs::types::{format_bytes, format_speed};
 use crate::transfer::types::{TransferDirection, TransferState};
+use crate::ui::icons::Icons;
 use crate::ui::tooltip::tooltip_view;
 
 impl RiftApp {
@@ -24,7 +25,7 @@ impl RiftApp {
                     .justify_between()
                     .px_3()
                     .py_2()
-                    .bg(self.theme.bg_header)
+                    .bg(self.theme.bg_toolbar)
                     .border_b_1()
                     .border_color(self.theme.border)
                     .child(
@@ -82,7 +83,7 @@ impl RiftApp {
                             .child(
                                 div()
                                     .id("btn-close-transfers")
-                                    .tooltip(tooltip_view("Close Drawer", Some("Esc")))
+                                    .tooltip(tooltip_view(self.theme, "Close Drawer", Some("Esc")))
                                     .cursor_pointer()
                                     .w(px(22.0))
                                     .h(px(22.0))
@@ -92,11 +93,12 @@ impl RiftApp {
                                     .rounded_sm()
                                     .hover(|s| s.bg(self.theme.bg_row_hover))
                                     .text_size(self.theme.font_size_ui)
+                                    .text_color(self.theme.text_muted)
                                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
                                         this.show_transfer_drawer = false;
                                         cx.notify();
                                     }))
-                                    .child("✕"),
+                                    .child(Icons::CLOSE),
                             ),
                     ),
             )
@@ -128,7 +130,7 @@ impl RiftApp {
                                 self.theme.accent,
                                 format!("{}% · {}", pct_int, format_speed(item.speed_bps)),
                             ),
-                            TransferState::Completed => (self.theme.bg_badge_success, self.theme.success, "Completed ✓".to_string()),
+                            TransferState::Completed => (self.theme.bg_badge_success, self.theme.success, format!("Completed {}", Icons::CHECK)),
                             TransferState::Failed(err) => (self.theme.bg_badge_danger, self.theme.danger, format!("Failed: {err}")),
                             TransferState::Cancelled => (self.theme.bg_input, self.theme.text_muted, "Cancelled".to_string()),
                         };
@@ -229,7 +231,8 @@ impl RiftApp {
                                             }),
                                     ),
                             )
-                            // Real visual progress bar track
+                            // Real visual progress bar track (fractional fill
+                            // scales with the drawer width instead of a fixed px).
                             .child(
                                 div()
                                     .h(px(4.0))
@@ -240,7 +243,7 @@ impl RiftApp {
                                     .child(
                                         div()
                                             .h_full()
-                                            .w(px((ratio * 400.0).max(if ratio > 0.0 { 6.0 } else { 0.0 })))
+                                            .w(gpui::relative(ratio))
                                             .rounded_full()
                                             .bg(bar_color),
                                     ),

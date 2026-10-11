@@ -25,7 +25,7 @@ impl RiftApp {
                     .child(
                         div()
                             .text_color(self.theme.accent)
-                            .text_size(px(7.0))
+                            .text_size(px(8.0))
                             .child(Icons::DOT),
                     )
                     .child(

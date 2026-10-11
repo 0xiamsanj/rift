@@ -1,9 +1,7 @@
 use gpui::*;
 use gpui::prelude::FluentBuilder;
 use crate::app::RiftApp;
-use crate::theme::Theme;
 use crate::ui::icons::Icons;
-use crate::ui::modals::ActiveModal;
 use crate::ui::pane_state::PaneId;
 use crate::ui::tooltip::tooltip_view;
 
@@ -72,7 +70,7 @@ impl RiftApp {
                                 .child(
                                     div()
                                         .text_color(self.theme.success)
-                                        .text_size(px(7.5))
+                                        .text_size(px(8.0))
                                         .child(Icons::DOT),
                                 )
                                 .child(
@@ -167,10 +165,12 @@ impl RiftApp {
                             .px_1()
                             .py(px(0.5))
                             .rounded_sm()
-                            .bg(gpui::rgba(0xffffff0a))
+                            .bg(self.theme.keycap_bg)
+                            .border_1()
+                            .border_color(self.theme.keycap_border)
                             .font_family(self.theme.font_mono)
                             .text_size(px(8.5))
-                            .text_color(self.theme.text_muted)
+                            .text_color(self.theme.keycap_text)
                             .child("Ctrl+P"),
                     ),
             )
@@ -196,7 +196,7 @@ impl RiftApp {
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(self.theme.accent)
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
-                                this.transfer_selected(this.active_pane);
+                                this.transfer_selected(this.active_pane, cx);
                                 cx.notify();
                             }))
                             .child(if is_left { "Transfer →" } else { "← Transfer" })
@@ -240,7 +240,7 @@ impl RiftApp {
                     .child(
                         div()
                             .id("btn-toggle-bookmarks")
-                            .tooltip(tooltip_view("Bookmarks", Some("Ctrl+B")))
+                            .tooltip(tooltip_view(self.theme, "Bookmarks", Some("Ctrl+B")))
                             .cursor_pointer()
                             .w(px(22.0))
                             .h(px(22.0))
@@ -252,7 +252,7 @@ impl RiftApp {
                             .text_size(self.theme.font_size_caption)
                             .text_color(self.theme.text_secondary)
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _ev, _window, cx| {
-                                this.modal = ActiveModal::BookmarksList;
+                                this.open_bookmarks_modal();
                                 cx.notify();
                             }))
                             .child(Icons::BOOKMARK),
@@ -260,7 +260,7 @@ impl RiftApp {
                     .child(
                         div()
                             .id("btn-toggle-theme")
-                            .tooltip(tooltip_view("Toggle Theme", Some("Ctrl+T")))
+                            .tooltip(tooltip_view(self.theme, "Toggle Theme", Some("Ctrl+T")))
                             .cursor_pointer()
                             .w(px(22.0))
                             .h(px(22.0))
@@ -275,7 +275,7 @@ impl RiftApp {
                                 this.toggle_theme();
                                 cx.notify();
                             }))
-                            .child(if self.theme.bg_pane == Theme::zed_dark().bg_pane { "☀" } else { "☾" }),
+                            .child(if self.theme.is_dark { "☀" } else { "☾" }),
                     ),
             )
     }

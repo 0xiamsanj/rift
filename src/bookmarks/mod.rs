@@ -17,13 +17,30 @@ pub struct Bookmark {
 
 pub struct BookmarkStore {
     pub session_bookmarks: Vec<Bookmark>,
+    /// Cached copy of the persistent bookmarks file. The bookmarks dialog
+    /// renders on every frame, so it must read from this cache instead of
+    /// hitting the filesystem per render. Refresh via `refresh_saved_cache`.
+    pub cached_saved_bookmarks: Vec<Bookmark>,
+}
+
+impl Default for BookmarkStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BookmarkStore {
     pub fn new() -> Self {
+        let cached_saved_bookmarks = Self::load_saved_bookmarks();
         Self {
             session_bookmarks: Vec::new(),
+            cached_saved_bookmarks,
         }
+    }
+
+    /// Re-reads the persistent bookmarks file into the render cache.
+    pub fn refresh_saved_cache(&mut self) {
+        self.cached_saved_bookmarks = Self::load_saved_bookmarks();
     }
 
     fn config_path() -> Option<PathBuf> {

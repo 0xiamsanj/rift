@@ -1,7 +1,8 @@
 use std::fs::File;
 use std::io::Write;
+use std::path::PathBuf;
 use rift::fs::local::LocalFs;
-use rift::fs::types::{FileKind, SortColumn, SortDirection};
+use rift::fs::types::{FileEntry, FileKind, FileMetadata, SortColumn, SortDirection};
 
 #[test]
 fn test_local_fs_listing_and_sorting() {
@@ -74,4 +75,45 @@ fn test_local_fs_file_operations() {
     // Delete directory
     LocalFs::delete_entry(&renamed_dir).unwrap();
     assert!(!renamed_dir.exists());
+}
+
+fn make_entry(name: &str, size: u64) -> FileEntry {
+    FileEntry {
+        name: name.to_string(),
+        path: PathBuf::from(name),
+        kind: FileKind::File,
+        metadata: FileMetadata {
+            size,
+            modified: None,
+            is_readonly: false,
+            permissions_str: "644".to_string(),
+        },
+        extension: "txt".to_string(),
+    }
+}
+
+#[test]
+fn test_sort_tiebreak_by_name_is_deterministic() {
+    // Equal-size files must fall back to name order regardless of the
+    // incoming (OS-enumeration) order, so repeated sorts are stable.
+    let mut forward = vec![make_entry("b.txt", 10), make_entry("a.txt", 10)];
+    LocalFs::sort_entries(
+        &mut forward,
+        SortColumn::Size,
+        SortDirection::Ascending,
+        false,
+    );
+    assert_eq!(forward[0].name, "a.txt");
+    assert_eq!(forward[1].name, "b.txt");
+
+    let mut reversed = vec![make_entry("b.txt", 10), make_entry("a.txt", 10)];
+    LocalFs::sort_entries(
+        &mut reversed,
+        SortColumn::Size,
+        SortDirection::Descending,
+        false,
+    );
+    // Descending reverses the tiebreak too, but stays deterministic.
+    assert_eq!(reversed[0].name, "b.txt");
+    assert_eq!(reversed[1].name, "a.txt");
 }

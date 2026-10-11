@@ -47,7 +47,7 @@ impl RiftApp {
                     .px_2()
                     .bg(self.theme.bg_header)
                     .border_b_1()
-                    .border_color(if is_active { self.theme.accent } else { self.theme.border })
+                    .border_color(if is_active { self.theme.border_focused } else { self.theme.border })
                     // Left: Identity & Breadcrumbs
                     .child(
                         div()
@@ -68,7 +68,7 @@ impl RiftApp {
                                             } else {
                                                 self.theme.syntax_cyan
                                             })
-                                            .text_size(px(7.5))
+                                            .text_size(px(8.0))
                                             .child(Icons::DOT),
                                     )
                                     .child(
@@ -170,7 +170,7 @@ impl RiftApp {
                                                             self.theme.text_secondary
                                                         })
                                                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
-                                                            this.navigate_pane(pane_id, target_path.clone());
+                                                            this.navigate_pane(pane_id, target_path.clone(), cx);
                                                             cx.stop_propagation();
                                                             cx.notify();
                                                         }))
@@ -197,7 +197,7 @@ impl RiftApp {
                             .child(
                                 div()
                                     .id(ElementId::Name(format!("btn-back-{:?}", pane_id).into()))
-                                    .tooltip(tooltip_view("Back", Some("Alt+Left")))
+                                    .tooltip(tooltip_view(self.theme, "Back", Some("Alt+Left")))
                                     .cursor_pointer()
                                     .w(px(18.0))
                                     .h(px(18.0))
@@ -213,15 +213,15 @@ impl RiftApp {
                                         self.theme.text_primary
                                     })
                                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
-                                        this.go_back(pane_id);
+                                        this.go_back(pane_id, cx);
                                         cx.notify();
                                     }))
-                                    .child("‹"),
+                                    .child(Icons::CHEVRON_LEFT),
                             )
                             .child(
                                 div()
                                     .id(ElementId::Name(format!("btn-forward-{:?}", pane_id).into()))
-                                    .tooltip(tooltip_view("Forward", Some("Alt+Right")))
+                                    .tooltip(tooltip_view(self.theme, "Forward", Some("Alt+Right")))
                                     .cursor_pointer()
                                     .w(px(18.0))
                                     .h(px(18.0))
@@ -237,15 +237,15 @@ impl RiftApp {
                                         self.theme.text_primary
                                     })
                                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
-                                        this.go_forward(pane_id);
+                                        this.go_forward(pane_id, cx);
                                         cx.notify();
                                     }))
-                                    .child("›"),
+                                    .child(Icons::CHEVRON_RIGHT),
                             )
                             .child(
                                 div()
                                     .id(ElementId::Name(format!("btn-parent-{:?}", pane_id).into()))
-                                    .tooltip(tooltip_view("Parent Directory", Some("Backspace")))
+                                    .tooltip(tooltip_view(self.theme, "Parent Directory", Some("Backspace")))
                                     .cursor_pointer()
                                     .w(px(18.0))
                                     .h(px(18.0))
@@ -257,15 +257,15 @@ impl RiftApp {
                                     .text_size(self.theme.font_size_caption)
                                     .text_color(self.theme.text_secondary)
                                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
-                                        this.go_parent(pane_id);
+                                        this.go_parent(pane_id, cx);
                                         cx.notify();
                                     }))
-                                    .child("↑"),
+                                    .child(Icons::UP_ARROW),
                             )
                             .child(
                                 div()
                                     .id(ElementId::Name(format!("btn-refresh-{:?}", pane_id).into()))
-                                    .tooltip(tooltip_view("Refresh", Some("Ctrl+R")))
+                                    .tooltip(tooltip_view(self.theme, "Refresh", Some("Ctrl+R")))
                                     .cursor_pointer()
                                     .w(px(18.0))
                                     .h(px(18.0))
@@ -277,15 +277,15 @@ impl RiftApp {
                                     .text_size(self.theme.font_size_caption)
                                     .text_color(self.theme.text_secondary)
                                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
-                                        this.refresh_pane(pane_id);
+                                        this.refresh_pane(pane_id, cx);
                                         cx.notify();
                                     }))
-                                    .child("⟳"),
+                                    .child(Icons::REFRESH),
                             )
                             .child(
                                 div()
                                     .id(ElementId::Name(format!("btn-hidden-{:?}", pane_id).into()))
-                                    .tooltip(tooltip_view("Toggle Hidden Files", Some("Ctrl+H")))
+                                    .tooltip(tooltip_view(self.theme, "Toggle Hidden Files", Some("Ctrl+H")))
                                     .cursor_pointer()
                                     .px_1()
                                     .h(px(18.0))
@@ -299,15 +299,15 @@ impl RiftApp {
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(if pane.show_hidden { self.theme.accent } else { self.theme.text_muted })
                                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
-                                        this.toggle_hidden(pane_id);
+                                        this.toggle_hidden(pane_id, cx);
                                         cx.notify();
                                     }))
-                                    .child(".*"),
+                                    .child(Icons::HIDDEN),
                             )
                             .child(
                                 div()
                                     .id(ElementId::Name(format!("btn-filter-toggle-{:?}", pane_id).into()))
-                                    .tooltip(tooltip_view("Filter Files", Some("Ctrl+F")))
+                                    .tooltip(tooltip_view(self.theme, "Filter Files", Some("Ctrl+F")))
                                     .cursor_pointer()
                                     .w(px(18.0))
                                     .h(px(18.0))
@@ -380,10 +380,10 @@ impl RiftApp {
                                     };
                                     p.filter.clear();
                                     p.filter_active = false;
-                                    this.refresh_pane(pane_id);
+                                    this.refresh_pane(pane_id, cx);
                                     cx.notify();
                                 }))
-                                .child("✕ Esc"),
+                                .child(format!("{} Esc", Icons::CLOSE)),
                         ),
                 )
             })
@@ -411,7 +411,7 @@ impl RiftApp {
                                     PaneId::Right => &mut this.right_pane,
                                 };
                                 p.toggle_sort(SortColumn::Name);
-                                this.refresh_pane(pane_id);
+                                this.refresh_pane(pane_id, cx);
                                 cx.notify();
                             }))
                             .child(format!(
@@ -438,7 +438,7 @@ impl RiftApp {
                                     PaneId::Right => &mut this.right_pane,
                                 };
                                 p.toggle_sort(SortColumn::Extension);
-                                this.refresh_pane(pane_id);
+                                this.refresh_pane(pane_id, cx);
                                 cx.notify();
                             }))
                             .child(format!(
@@ -465,7 +465,7 @@ impl RiftApp {
                                     PaneId::Right => &mut this.right_pane,
                                 };
                                 p.toggle_sort(SortColumn::Size);
-                                this.refresh_pane(pane_id);
+                                this.refresh_pane(pane_id, cx);
                                 cx.notify();
                             }))
                             .child(format!(
@@ -492,7 +492,7 @@ impl RiftApp {
                                     PaneId::Right => &mut this.right_pane,
                                 };
                                 p.toggle_sort(SortColumn::Modified);
-                                this.refresh_pane(pane_id);
+                                this.refresh_pane(pane_id, cx);
                                 cx.notify();
                             }))
                             .child(format!(
@@ -519,10 +519,21 @@ impl RiftApp {
                                     PaneId::Right => &mut this.right_pane,
                                 };
                                 p.toggle_sort(SortColumn::Permissions);
-                                this.refresh_pane(pane_id);
+                                this.refresh_pane(pane_id, cx);
                                 cx.notify();
                             }))
-                            .child("PERM"),
+                            .child(format!(
+                                "PERM{}",
+                                if pane.sort_column == SortColumn::Permissions {
+                                    if pane.sort_direction == SortDirection::Ascending {
+                                        Icons::SORT_ASC
+                                    } else {
+                                        Icons::SORT_DESC
+                                    }
+                                } else {
+                                    ""
+                                }
+                            )),
                     ),
             )
             // Scrollable File List Body
@@ -553,8 +564,8 @@ impl RiftApp {
                                 .child(
                                     div()
                                         .text_size(px(24.0))
-                                        .text_color(self.theme.syntax_cyan)
-                                        .child("☁"),
+                                        .text_color(self.theme.text_muted)
+                                        .child(Icons::DISCONNECTED),
                                 )
                                 .child(
                                     div()
@@ -603,7 +614,7 @@ impl RiftApp {
                                     div()
                                         .text_color(self.theme.accent)
                                         .text_size(self.theme.font_size_ui)
-                                        .child("⟳"),
+                                        .child(Icons::REFRESH),
                                 )
                                 .child(
                                     div()
@@ -638,7 +649,7 @@ impl RiftApp {
                             .bg(self.theme.bg_pane)
                             .hover(|s| s.bg(self.theme.bg_row_hover))
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _ev, _window, cx| {
-                                this.go_parent(pane_id);
+                                this.go_parent(pane_id, cx);
                                 cx.notify();
                             }))
                             .on_mouse_down(MouseButton::Right, cx.listener(move |this, ev: &MouseDownEvent, _window, cx| {
@@ -667,7 +678,7 @@ impl RiftApp {
                                         div()
                                             .font_family(self.theme.font_ui)
                                             .text_size(self.theme.font_size_body)
-                                            .font_weight(FontWeight::BOLD)
+                                            .font_weight(FontWeight::SEMIBOLD)
                                             .text_color(self.theme.text_secondary)
                                             .child(".."),
                                     ),
@@ -763,7 +774,7 @@ impl RiftApp {
 
                                 if ev.click_count == 2 {
                                     if is_dir {
-                                        this.navigate_pane(pane_id, target_path.clone());
+                                        this.navigate_pane(pane_id, target_path.clone(), cx);
                                     }
                                 } else if shift {
                                     p.select_range_to(idx);
@@ -814,13 +825,9 @@ impl RiftApp {
                                             } else {
                                                 FontWeight::NORMAL
                                             })
-                                            .text_color(if is_selected {
-                                                self.theme.text_primary
-                                            } else if is_dir {
-                                                self.theme.dir_icon
-                                            } else {
-                                                self.theme.text_primary
-                                            })
+                                            // Names stay primary for readability (Zed-style);
+                                            // the amber dir color lives on the icon only.
+                                            .text_color(self.theme.text_primary)
                                             .child(entry.name.clone()),
                                     ),
                             )

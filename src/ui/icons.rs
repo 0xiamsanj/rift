@@ -27,7 +27,11 @@ impl Icons {
     pub const SORT_ASC: &'static str = " ▴";
     pub const SORT_DESC: &'static str = " ▾";
     pub const SEARCH: &'static str = "⌕";
+    pub const CHEVRON_LEFT: &'static str = "‹";
     pub const CHEVRON_RIGHT: &'static str = "›";
+    pub const HIDDEN: &'static str = ".*";
+    pub const PLAY: &'static str = "▶";
+    pub const DISCONNECTED: &'static str = "○";
     pub const DOT: &'static str = "●";
     pub const DOT_HOLLOW: &'static str = "○";
 

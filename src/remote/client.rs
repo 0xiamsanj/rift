@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{Local, TimeZone};
@@ -26,6 +27,12 @@ pub struct SftpSession {
 pub struct RemoteClient {
     inner: Arc<Mutex<Option<SftpSession>>>,
     pub current_profile: Arc<Mutex<Option<ConnectionProfile>>>,
+}
+
+impl Default for RemoteClient {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RemoteClient {
@@ -66,8 +73,7 @@ impl RemoteClient {
                     .parse()
                     .or_else(|_| {
                         use std::net::ToSocketAddrs;
-                        addr.to_socket_addrs()
-                            .map_err(|e| e)?
+                        addr.to_socket_addrs()?
                             .next()
                             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Host address resolution failed"))
                     })
@@ -321,10 +327,13 @@ impl RemoteClient {
     }
 
     /// Uploads a local file to remote server with a progress callback.
+    /// The `cancel` flag is polled between chunks; when set, the transfer
+    /// aborts promptly instead of running to completion.
     pub async fn upload_file<F>(
         &self,
         local_path: PathBuf,
         remote_path: String,
+        cancel: Arc<AtomicBool>,
         mut on_progress: F,
     ) -> Result<u64, String>
     where
@@ -334,6 +343,10 @@ impl RemoteClient {
         tokio::task::spawn_blocking(move || {
             let guard = client_lock.lock();
             let session = guard.as_ref().ok_or_else(|| "Not connected".to_string())?;
+
+            if cancel.load(Ordering::SeqCst) {
+                return Err("Transfer cancelled by user".to_string());
+            }
 
             let mut file = std::fs::File::open(&local_path)
                 .map_err(|e| format!("Failed to open local file {}: {e}", local_path.display()))?;
@@ -352,6 +365,9 @@ impl RemoteClient {
             let mut total_written = 0u64;
 
             loop {
+                if cancel.load(Ordering::SeqCst) {
+                    return Err("Transfer cancelled by user".to_string());
+                }
                 let bytes_read = file
                     .read(&mut buffer)
                     .map_err(|e| format!("Local read error: {e}"))?;
@@ -372,10 +388,13 @@ impl RemoteClient {
     }
 
     /// Downloads a remote file to local with a progress callback.
+    /// The `cancel` flag is polled between chunks; when set, the transfer
+    /// aborts promptly instead of running to completion.
     pub async fn download_file<F>(
         &self,
         remote_path: String,
         local_path: PathBuf,
+        cancel: Arc<AtomicBool>,
         mut on_progress: F,
     ) -> Result<u64, String>
     where
@@ -385,6 +404,10 @@ impl RemoteClient {
         tokio::task::spawn_blocking(move || {
             let guard = client_lock.lock();
             let session = guard.as_ref().ok_or_else(|| "Not connected".to_string())?;
+
+            if cancel.load(Ordering::SeqCst) {
+                return Err("Transfer cancelled by user".to_string());
+            }
 
             let mut remote_file = session
                 .sftp
@@ -402,6 +425,9 @@ impl RemoteClient {
             let mut total_read = 0u64;
 
             loop {
+                if cancel.load(Ordering::SeqCst) {
+                    return Err("Transfer cancelled by user".to_string());
+                }
                 let bytes_read = remote_file
                     .read(&mut buffer)
                     .map_err(|e| format!("Remote read error: {e}"))?;

@@ -66,7 +66,7 @@ impl LocalFs {
             let metadata = match entry.metadata() {
                 Ok(m) => {
                     let size = if kind == FileKind::Directory { 0 } else { m.len() };
-                    let modified = m.modified().ok().map(|t| DateTime::<Local>::from(t));
+                    let modified = m.modified().ok().map(DateTime::<Local>::from);
                     let is_readonly = m.permissions().readonly();
                     
                     #[cfg(unix)]
@@ -132,6 +132,14 @@ impl LocalFs {
                 SortColumn::Size => a.metadata.size.cmp(&b.metadata.size),
                 SortColumn::Modified => a.metadata.modified.cmp(&b.metadata.modified),
                 SortColumn::Permissions => a.metadata.permissions_str.cmp(&b.metadata.permissions_str),
+            };
+
+            // Deterministic tie-break on name so repeated sorts are stable
+            // regardless of the OS directory-enumeration order.
+            let ord = if ord == std::cmp::Ordering::Equal && sort_by != SortColumn::Name {
+                a.name.to_lowercase().cmp(&b.name.to_lowercase())
+            } else {
+                ord
             };
 
             match direction {

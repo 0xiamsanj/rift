@@ -8,7 +8,12 @@ use crate::ui::modals::{ActiveModal, AddBookmarkModalState, NewFolderModalState,
 use crate::ui::pane_state::PaneId;
 
 impl RiftApp {
-    pub fn render_context_menu(&self, menu: &ContextMenuState, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_context_menu(
+        &self,
+        menu: &ContextMenuState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let pane_id = menu.target_pane;
         let is_left = pane_id == PaneId::Left;
         let pane = match pane_id {
@@ -21,10 +26,13 @@ impl RiftApp {
 
         let menu_width: f32 = 220.0;
         let menu_height: f32 = 270.0;
+        let viewport = window.viewport_size();
         let pos_x = menu.position.x.to_f64() as f32;
         let pos_y = menu.position.y.to_f64() as f32;
-        let x = pos_x.clamp(8.0f32, (1280.0f32 - menu_width).max(8.0f32));
-        let y = pos_y.clamp(8.0f32, (800.0f32 - menu_height).max(8.0f32));
+        let max_x = (viewport.width.to_f64() as f32 - menu_width).max(8.0);
+        let max_y = (viewport.height.to_f64() as f32 - menu_height).max(8.0);
+        let x = pos_x.clamp(8.0f32, max_x);
+        let y = pos_y.clamp(8.0f32, max_y);
 
         let transfer_label = if is_left { "Transfer to Remote" } else { "Transfer to Local" };
 
@@ -110,7 +118,7 @@ impl RiftApp {
                                 false,
                                 cx.listener(move |this, _ev, _window, cx| {
                                     this.context_menu = None;
-                                    this.navigate_pane(pane_id, tp.clone());
+                                    this.navigate_pane(pane_id, tp.clone(), cx);
                                     cx.notify();
                                 }),
                             ))
@@ -123,7 +131,7 @@ impl RiftApp {
                             false,
                             cx.listener(move |this, _ev, _window, cx| {
                                 this.context_menu = None;
-                                this.transfer_selected(pane_id);
+                                this.transfer_selected(pane_id, cx);
                                 cx.notify();
                             }),
                         ))
@@ -196,7 +204,7 @@ impl RiftApp {
                                 "menu-add-bookmark",
                                 Icons::BOOKMARK,
                                 "Add to Bookmarks",
-                                Some("Ctrl+B"),
+                                Some("Ctrl+Shift+B"),
                                 false,
                                 cx.listener(move |this, _ev, _window, cx| {
                                     this.context_menu = None;
@@ -211,7 +219,9 @@ impl RiftApp {
                             )
                         })
                     })
-                    .child(self.render_menu_separator())
+                    .when(target_entry.is_some(), |el| {
+                        el.child(self.render_menu_separator())
+                    })
                     .child(self.render_menu_item(
                         "menu-new-folder",
                         Icons::NEW_FOLDER,
@@ -235,7 +245,7 @@ impl RiftApp {
                         false,
                         cx.listener(move |this, _ev, _window, cx| {
                             this.context_menu = None;
-                            this.go_parent(pane_id);
+                            this.go_parent(pane_id, cx);
                             cx.notify();
                         }),
                     ))
@@ -263,7 +273,7 @@ impl RiftApp {
                         false,
                         cx.listener(move |this, _ev, _window, cx| {
                             this.context_menu = None;
-                            this.refresh_pane(pane_id);
+                            this.refresh_pane(pane_id, cx);
                             cx.notify();
                         }),
                     ))

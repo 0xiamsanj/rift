@@ -73,6 +73,7 @@ impl PaneState {
             self.selected_items.clear();
             self.focused_index = None;
             self.filter.clear();
+            self.filter_active = false;
         }
     }
 
@@ -96,6 +97,8 @@ impl PaneState {
             self.path_input_buffer = prev;
             self.selected_items.clear();
             self.focused_index = None;
+            self.filter.clear();
+            self.filter_active = false;
             true
         } else {
             false
@@ -109,6 +112,8 @@ impl PaneState {
             self.path_input_buffer = next;
             self.selected_items.clear();
             self.focused_index = None;
+            self.filter.clear();
+            self.filter_active = false;
             true
         } else {
             false
@@ -209,13 +214,10 @@ impl PaneState {
     }
 
     pub fn select_last(&mut self) -> Option<usize> {
-        if let Some((idx, entry)) = self.entries.iter().enumerate().last() {
-            let name = entry.name.clone();
-            self.set_single_selection(&name, idx);
-            Some(idx)
-        } else {
-            None
-        }
+        let idx = self.entries.len().checked_sub(1)?;
+        let name = self.entries.get(idx)?.name.clone();
+        self.set_single_selection(&name, idx);
+        Some(idx)
     }
 
     pub fn page_up(&mut self) -> Option<usize> {

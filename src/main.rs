@@ -14,19 +14,19 @@ fn main() {
 
     let app = Application::new();
     app.run(|cx: &mut App| {
-        let mut options = WindowOptions::default();
-        options.window_bounds = Some(WindowBounds::Windowed(Bounds {
-            origin: Point::default(),
-            size: size(px(1280.0), px(800.0)),
-        }));
-        options.titlebar = Some(TitlebarOptions {
-            title: Some("Rift - Fast Native SFTP Client".into()),
-            appears_transparent: false,
-            traffic_light_position: None,
-        });
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: Point::default(),
+                size: size(px(1280.0), px(800.0)),
+            })),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Rift - Fast Native SFTP Client".into()),
+                appears_transparent: false,
+                traffic_light_position: None,
+            }),
+            ..Default::default()
+        };
 
-        let _ = cx.open_window(options, |_, cx| {
-            cx.new(|cx| RiftApp::new(cx))
-        });
+        let _ = cx.open_window(options, |_, cx| cx.new(RiftApp::new));
     });
 }

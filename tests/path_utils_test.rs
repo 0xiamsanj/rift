@@ -25,6 +25,17 @@ fn test_unc_path_normalization() {
 }
 
 #[test]
+fn test_unc_duplicate_separator_collapse() {
+    // Forward slashes become backslashes and interior duplicates collapse,
+    // while the leading UNC prefix is preserved.
+    let unc = normalize_path("//server//share//data");
+    assert_eq!(unc, "\\\\server\\share\\data");
+
+    let unc2 = normalize_path("\\\\server\\\\share\\\\data");
+    assert_eq!(unc2, "\\\\server\\share\\data");
+}
+
+#[test]
 fn test_unix_path_normalization() {
     let unix = normalize_path("/var/log//nginx/error.log");
     assert_eq!(unix, "/var/log/nginx/error.log");

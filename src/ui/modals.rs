@@ -43,9 +43,9 @@ impl Default for ConnectModalState {
         Self {
             profiles: Vec::new(),
             selected_profile_id: None,
-            host_input: "127.0.0.1".to_string(),
+            host_input: String::new(),
             port_input: "22".to_string(),
-            username_input: "user".to_string(),
+            username_input: String::new(),
             password_input: String::new(),
             key_path_input: String::new(),
             auth_type: 0,
@@ -83,6 +83,11 @@ pub struct HostKeyModalState {
     pub port: u16,
     pub fingerprint: String,
     pub key_type: String,
+    /// Connection the user was establishing when the unknown key appeared.
+    /// "Trust & Connect" retries with explicit trust instead of re-reading
+    /// the (now replaced) connect dialog.
+    pub pending_profile: ConnectionProfile,
+    pub pending_password: Option<String>,
 }
 
 #[derive(Debug, Clone)]

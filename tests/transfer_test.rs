@@ -44,6 +44,22 @@ fn test_transfer_item_progress() {
     assert_eq!(item.progress_ratio(), 0.0);
 }
 
+#[test]
+fn test_transfer_manager_respects_max_concurrency_setting() {
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let default_manager = TransferManager::new(tx.clone());
+    assert_eq!(default_manager.max_concurrency(), 2);
+
+    let (tx2, _rx2) = mpsc::unbounded_channel::<TransferEvent>();
+    let wide = TransferManager::with_max_concurrency(tx2, 8);
+    assert_eq!(wide.max_concurrency(), 8);
+
+    // Zero/clamped input always yields at least one slot.
+    let (tx3, _rx3) = mpsc::unbounded_channel::<TransferEvent>();
+    let clamped = TransferManager::with_max_concurrency(tx3, 0);
+    assert_eq!(clamped.max_concurrency(), 1);
+}
+
 #[tokio::test]
 async fn test_transfer_manager_cancellation() {
     let (tx, mut rx) = mpsc::unbounded_channel();

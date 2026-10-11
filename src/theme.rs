@@ -31,23 +31,31 @@ pub struct Theme {
     pub success: Rgba,
     pub warning: Rgba,
     pub danger: Rgba,
+    pub danger_hover: Rgba,
     pub dir_icon: Rgba,
     pub file_icon: Rgba,
     pub syntax_purple: Rgba,
     pub syntax_cyan: Rgba,
 
+    // Theme mode flag (avoids fragile color comparisons to detect dark/light)
+    pub is_dark: bool,
+
+    // Standardized modal widths (uiux §6: consistent modal widths/padding)
+    pub modal_w_sm: Pixels, // Small forms: new folder, rename, delete, conflict, bookmark
+    pub modal_w_md: Pixels, // Medium forms: connect, host-key verification
+
     // Zed Typography Families
     pub font_ui: &'static str,
     pub font_mono: &'static str,
 
-    // Zed Exact Typographic Scale
-    pub font_size_modal_title: Pixels, // 15.0px - Modal dialog titles
-    pub font_size_body: Pixels,        // 13.0px - File and directory names, input fields
-    pub font_size_ui: Pixels,          // 12.0px - Toolbar actions, dialog buttons
-    pub font_size_breadcrumbs: Pixels, // 11.5px - Breadcrumbs
-    pub font_size_caption: Pixels,     // 11.0px - Status bar, footer counts
-    pub font_size_table_header: Pixels,// 11.0px - Table column headers
-    pub font_size_mono: Pixels,        // 11.5px - Monospace columns (sizes, dates, perms)
+    // Compact typographic scale (tuned down from Zed's 15/13/12/11.5/11 for density)
+    pub font_size_modal_title: Pixels, // 12.0px - Modal dialog titles
+    pub font_size_body: Pixels,        // 10.5px - File and directory names, input fields
+    pub font_size_ui: Pixels,          // 10.0px - Toolbar actions, dialog buttons
+    pub font_size_breadcrumbs: Pixels, // 9.5px - Breadcrumbs
+    pub font_size_caption: Pixels,     // 9.0px - Status bar, footer counts
+    pub font_size_table_header: Pixels,// 9.0px - Table column headers
+    pub font_size_mono: Pixels,        // 9.5px - Monospace columns (sizes, dates, perms)
 }
 
 impl Default for Theme {
@@ -88,10 +96,15 @@ impl Theme {
             success: rgb(0x98c379),       // Zed One Dark green
             warning: rgb(0xe5c07b),       // Zed One Dark yellow/amber
             danger: rgb(0xe06c75),        // Zed One Dark coral red
+            danger_hover: rgb(0xf07178),  // Lighter red for danger-button hover
             dir_icon: rgb(0xe5c07b),      // Zed warm amber folder icon
             file_icon: rgb(0x61afef),     // Zed cyan/blue file icon
             syntax_purple: rgb(0xc678dd), // Zed syntax purple
             syntax_cyan: rgb(0x56b6c2),   // Zed syntax cyan
+
+            is_dark: true,
+            modal_w_sm: px(400.0),
+            modal_w_md: px(480.0),
 
             // Typography families & compact scale
             font_ui: "Noto Sans",
@@ -137,10 +150,15 @@ impl Theme {
             success: rgb(0x2da44e),
             warning: rgb(0xd4a72c),
             danger: rgb(0xcf222e),
+            danger_hover: rgb(0xa40e26),
             dir_icon: rgb(0xd4a72c),
             file_icon: rgb(0x0969da),
             syntax_purple: rgb(0x8250df),
             syntax_cyan: rgb(0x0598bc),
+
+            is_dark: false,
+            modal_w_sm: px(400.0),
+            modal_w_md: px(480.0),
 
             font_ui: "Noto Sans",
             font_mono: "JetBrainsMono Nerd Font",

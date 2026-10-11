@@ -54,8 +54,8 @@ impl RiftApp {
         // Background listener for transfer updates
         cx.spawn(async move |this, cx| {
             while let Some(event) = event_rx.recv().await {
-                let _ = this.update(&mut *cx, |app, cx| {
-                    app.handle_transfer_event(event);
+                let _ = this.update(cx, |app, cx| {
+                    app.handle_transfer_event(event, cx);
                     cx.notify();
                 });
             }
@@ -90,7 +90,7 @@ impl RiftApp {
         app
     }
 
-    fn handle_transfer_event(&mut self, event: TransferEvent) {
+    fn handle_transfer_event(&mut self, event: TransferEvent, cx: &mut Context<Self>) {
         match event {
             TransferEvent::ItemAdded(item) => {
                 self.transfer_items.push(item);
@@ -111,21 +111,21 @@ impl RiftApp {
                     it.state = state;
                 }
                 // Refresh panes if transfer finished successfully
-                self.refresh_pane(PaneId::Left);
-                self.refresh_pane(PaneId::Right);
+                self.refresh_pane(PaneId::Left, cx);
+                self.refresh_pane(PaneId::Right, cx);
             }
             TransferEvent::QueueFinished => {}
         }
     }
 
-    pub fn refresh_pane(&mut self, pane_id: PaneId) {
+    pub fn refresh_pane(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
         let is_remote = match pane_id {
             PaneId::Left => self.left_pane.is_remote,
             PaneId::Right => self.right_pane.is_remote,
         };
 
         if is_remote {
-            self.refresh_remote_pane(pane_id);
+            self.refresh_remote_pane(pane_id, cx);
         } else {
             self.refresh_local_pane(pane_id);
         }
@@ -156,6 +156,7 @@ impl RiftApp {
             Ok(entries) => {
                 pane.entries = entries;
                 pane.is_loading = false;
+                Self::prune_selection(pane);
             }
             Err(e) => {
                 pane.error_message = Some(format!("Error: {e}"));
@@ -164,7 +165,20 @@ impl RiftApp {
         }
     }
 
-    pub fn refresh_remote_pane(&mut self, pane_id: PaneId) {
+    /// Drops selected names and clamps the cursor after the entry list
+    /// changed, so refreshes never leave stale selections behind.
+    fn prune_selection(pane: &mut PaneState) {
+        let live: std::collections::HashSet<String> =
+            pane.entries.iter().map(|e| e.name.clone()).collect();
+        pane.selected_items.retain(|n| live.contains(n));
+        if let Some(idx) = pane.focused_index {
+            if idx >= pane.entries.len() {
+                pane.focused_index = None;
+            }
+        }
+    }
+
+    pub fn refresh_remote_pane(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
         if !self.remote_client.is_connected() {
             return;
         }
@@ -187,65 +201,88 @@ impl RiftApp {
         };
         let dirs_first = pane.directories_first;
         let client = self.remote_client.clone();
+        cx.notify();
 
-        // Spawn async request to list remote directory
-        // When finished, update entries via tokio spawn
-        tokio::spawn(async move {
-            let _ = client
-                .list_dir(remote_path, sort_by, direction, filter, dirs_first)
+        // Fetch off the UI thread, then apply the result back on it. The path
+        // is re-checked on completion so a slow listing cannot overwrite a
+        // newer navigation.
+        cx.spawn(async move |this, cx| {
+            let res = client
+                .list_dir(remote_path.clone(), sort_by, direction, filter, dirs_first)
                 .await;
-        });
+            let _ = this.update(cx, |app, cx| {
+                let pane = match pane_id {
+                    PaneId::Left => &mut app.left_pane,
+                    PaneId::Right => &mut app.right_pane,
+                };
+                if pane.current_path != remote_path {
+                    return;
+                }
+                pane.is_loading = false;
+                match res {
+                    Ok(entries) => {
+                        pane.entries = entries;
+                        Self::prune_selection(pane);
+                    }
+                    Err(e) => {
+                        pane.error_message = Some(e);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
-    pub fn navigate_pane(&mut self, pane_id: PaneId, target: String) {
+    pub fn navigate_pane(&mut self, pane_id: PaneId, target: String, cx: &mut Context<Self>) {
         let pane = match pane_id {
             PaneId::Left => &mut self.left_pane,
             PaneId::Right => &mut self.right_pane,
         };
         pane.navigate_to(target);
-        self.refresh_pane(pane_id);
+        self.refresh_pane(pane_id, cx);
     }
 
-    pub fn go_parent(&mut self, pane_id: PaneId) {
+    pub fn go_parent(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
         let pane = match pane_id {
             PaneId::Left => &mut self.left_pane,
             PaneId::Right => &mut self.right_pane,
         };
         if pane.go_up() {
-            self.refresh_pane(pane_id);
+            self.refresh_pane(pane_id, cx);
         }
     }
 
-    pub fn go_back(&mut self, pane_id: PaneId) {
+    pub fn go_back(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
         let pane = match pane_id {
             PaneId::Left => &mut self.left_pane,
             PaneId::Right => &mut self.right_pane,
         };
         if pane.go_back() {
-            self.refresh_pane(pane_id);
+            self.refresh_pane(pane_id, cx);
         }
     }
 
-    pub fn go_forward(&mut self, pane_id: PaneId) {
+    pub fn go_forward(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
         let pane = match pane_id {
             PaneId::Left => &mut self.left_pane,
             PaneId::Right => &mut self.right_pane,
         };
         if pane.go_forward() {
-            self.refresh_pane(pane_id);
+            self.refresh_pane(pane_id, cx);
         }
     }
 
-    pub fn toggle_hidden(&mut self, pane_id: PaneId) {
+    pub fn toggle_hidden(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
         let pane = match pane_id {
             PaneId::Left => &mut self.left_pane,
             PaneId::Right => &mut self.right_pane,
         };
         pane.toggle_hidden();
-        self.refresh_pane(pane_id);
+        self.refresh_pane(pane_id, cx);
     }
 
-    pub fn transfer_selected(&mut self, from_pane: PaneId) {
+    pub fn transfer_selected(&mut self, from_pane: PaneId, cx: &mut Context<Self>) {
         let (src_is_remote, src_entries, _src_dir, dst_is_remote, dst_dir) = match from_pane {
             PaneId::Left => (
                 self.left_pane.is_remote,
@@ -301,16 +338,34 @@ impl RiftApp {
             }
             self.status_message = Some("Download transfer queued".to_string());
         } else {
-            // Local -> Local copy
+            // Local -> Local copy. Never silently overwrite: existing
+            // destinations and directories are skipped and reported.
+            let mut copied = 0usize;
+            let mut skipped = 0usize;
             for entry in src_entries {
+                if entry.is_dir() {
+                    skipped += 1;
+                    continue;
+                }
                 let dest = PathBuf::from(&dst_dir).join(&entry.name);
-                if !entry.is_dir() {
-                    let _ = std::fs::copy(&entry.path, &dest);
+                if dest.exists() {
+                    skipped += 1;
+                    continue;
+                }
+                match std::fs::copy(&entry.path, &dest) {
+                    Ok(_) => copied += 1,
+                    Err(e) => {
+                        skipped += 1;
+                        self.status_message =
+                            Some(format!("Copy failed for '{}': {e}", entry.name));
+                    }
                 }
             }
-            self.refresh_pane(PaneId::Left);
-            self.refresh_pane(PaneId::Right);
-            self.status_message = Some("Files copied locally".to_string());
+            self.refresh_pane(PaneId::Left, cx);
+            self.refresh_pane(PaneId::Right, cx);
+            self.status_message = Some(format!(
+                "Copied {copied} file(s), skipped {skipped} (existing or directories)"
+            ));
         }
     }
 
@@ -331,33 +386,68 @@ impl RiftApp {
         });
     }
 
-    pub fn confirm_delete(&mut self, pane_id: PaneId, items: Vec<String>) {
+    pub fn confirm_delete(&mut self, pane_id: PaneId, items: Vec<String>, cx: &mut Context<Self>) {
         let (is_remote, dir) = match pane_id {
             PaneId::Left => (self.left_pane.is_remote, self.left_pane.current_path.clone()),
             PaneId::Right => (self.right_pane.is_remote, self.right_pane.current_path.clone()),
         };
 
         if !is_remote {
+            let mut failed = Vec::new();
             for name in items {
-                let p = PathBuf::from(&dir).join(name);
-                let _ = LocalFs::delete_entry(&p);
+                let p = PathBuf::from(&dir).join(&name);
+                if let Err(e) = LocalFs::delete_entry(&p) {
+                    failed.push(format!("{name}: {e}"));
+                }
             }
-            self.refresh_pane(pane_id);
+            if failed.is_empty() {
+                self.status_message = Some("Deleted selected item(s)".to_string());
+            } else {
+                self.status_message = Some(format!("Delete failed: {}", failed.join("; ")));
+            }
+            self.refresh_pane(pane_id, cx);
         } else if self.remote_client.is_connected() {
             let client = self.remote_client.clone();
-            tokio::spawn(async move {
+            cx.spawn(async move |this, cx| {
+                let mut failed = Vec::new();
                 for name in items {
                     let remote_p = join_path(&dir, &name, true);
-                    let _ = client.remove_file(remote_p).await;
+                    // Files unlink; directories need rmdir. Try both.
+                    let res = match client.remove_file(remote_p.clone()).await {
+                        Ok(_) => Ok(()),
+                        Err(_) => client.remove_dir(remote_p).await,
+                    };
+                    if let Err(e) = res {
+                        failed.push(format!("{name}: {e}"));
+                    }
                 }
-            });
+                let _ = this.update(cx, |app, cx| {
+                    if failed.is_empty() {
+                        app.status_message = Some("Deleted selected item(s)".to_string());
+                    } else {
+                        app.status_message =
+                            Some(format!("Remote delete failed: {}", failed.join("; ")));
+                    }
+                    app.refresh_pane(pane_id, cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+        } else {
+            self.status_message = Some("Remote server is not connected".to_string());
         }
         self.modal = ActiveModal::None;
     }
 
-    pub fn create_folder(&mut self, pane_id: PaneId, folder_name: &str) {
+    pub fn create_folder(&mut self, pane_id: PaneId, folder_name: &str, cx: &mut Context<Self>) {
         let folder_name = folder_name.trim();
         if folder_name.is_empty() {
+            return;
+        }
+        if !crate::fs::path_utils::is_valid_filename(folder_name) {
+            self.status_message = Some(format!(
+                "Invalid folder name '{folder_name}': avoid <>:\"/\\|?* and reserved names"
+            ));
             return;
         }
 
@@ -368,22 +458,53 @@ impl RiftApp {
 
         if !is_remote {
             let p = PathBuf::from(&dir).join(folder_name);
-            let _ = LocalFs::create_dir(&p);
-            self.refresh_pane(pane_id);
+            match LocalFs::create_dir(&p) {
+                Ok(_) => {
+                    self.status_message = Some(format!("Created folder '{folder_name}'"));
+                    self.refresh_pane(pane_id, cx);
+                }
+                Err(e) => {
+                    self.status_message = Some(format!("Create folder failed: {e}"));
+                }
+            }
         } else if self.remote_client.is_connected() {
             let client = self.remote_client.clone();
             let remote_p = join_path(&dir, folder_name, true);
-            tokio::spawn(async move {
-                let _ = client.create_dir(remote_p).await;
-            });
+            let label = folder_name.to_string();
+            cx.spawn(async move |this, cx| {
+                let res = client.create_dir(remote_p).await;
+                let _ = this.update(cx, |app, cx| {
+                    match res {
+                        Ok(_) => {
+                            app.status_message =
+                                Some(format!("Created remote folder '{label}'"));
+                        }
+                        Err(e) => {
+                            app.status_message =
+                                Some(format!("Create remote folder failed: {e}"));
+                        }
+                    }
+                    app.refresh_pane(pane_id, cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+        } else {
+            self.status_message = Some("Remote server is not connected".to_string());
         }
         self.modal = ActiveModal::None;
     }
 
-    pub fn rename_entry(&mut self, pane_id: PaneId, old_name: &str, new_name: &str) {
+    pub fn rename_entry(&mut self, pane_id: PaneId, old_name: &str, new_name: &str, cx: &mut Context<Self>) {
         let new_name = new_name.trim();
         if new_name.is_empty() || new_name == old_name {
             self.modal = ActiveModal::None;
+            return;
+        }
+        if !crate::fs::path_utils::is_valid_filename(new_name) {
+            self.status_message = Some(format!(
+                "Invalid name '{new_name}': avoid <>:\"/\\|?* and reserved names"
+            ));
             return;
         }
 
@@ -395,23 +516,53 @@ impl RiftApp {
         if !is_remote {
             let from = PathBuf::from(&dir).join(old_name);
             let to = PathBuf::from(&dir).join(new_name);
-            let _ = LocalFs::rename_entry(&from, &to);
-            self.refresh_pane(pane_id);
+            if to.exists() {
+                self.status_message = Some(format!(
+                    "'{new_name}' already exists; rename cancelled to avoid overwriting"
+                ));
+                return;
+            }
+            match LocalFs::rename_entry(&from, &to) {
+                Ok(_) => {
+                    self.status_message =
+                        Some(format!("Renamed '{old_name}' to '{new_name}'"));
+                    self.refresh_pane(pane_id, cx);
+                }
+                Err(e) => {
+                    self.status_message = Some(format!("Rename failed: {e}"));
+                }
+            }
         } else if self.remote_client.is_connected() {
             let client = self.remote_client.clone();
             let from = join_path(&dir, old_name, true);
             let to = join_path(&dir, new_name, true);
-            tokio::spawn(async move {
-                let _ = client.rename(from, to).await;
-            });
+            let label = format!("{old_name} -> {new_name}");
+            cx.spawn(async move |this, cx| {
+                let res = client.rename(from, to).await;
+                let _ = this.update(cx, |app, cx| {
+                    match res {
+                        Ok(_) => app.status_message = Some(format!("Renamed {label}")),
+                        Err(e) => {
+                            app.status_message = Some(format!("Remote rename failed: {e}"))
+                        }
+                    }
+                    app.refresh_pane(pane_id, cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+        } else {
+            self.status_message = Some("Remote server is not connected".to_string());
         }
         self.modal = ActiveModal::None;
     }
 
     pub fn open_connect_modal(&mut self) {
         let profiles = ProfileStore::load_profiles();
-        let mut state = ConnectModalState::default();
-        state.profiles = profiles;
+        let mut state = ConnectModalState {
+            profiles,
+            ..ConnectModalState::default()
+        };
         if let Some(first) = state.profiles.first() {
             state.selected_profile_id = Some(first.id.clone());
             state.host_input = first.host.clone();
@@ -421,14 +572,48 @@ impl RiftApp {
         self.modal = ActiveModal::Connect(state);
     }
 
+    pub fn open_bookmarks_modal(&mut self) {
+        self.bookmark_store.refresh_saved_cache();
+        self.modal = ActiveModal::BookmarksList;
+    }
+
+    /// Navigates to a bookmark, guarding remote targets behind an active
+    /// connection instead of stranding the pane on an unreachable path.
+    pub fn navigate_bookmark(
+        &mut self,
+        pane_id: PaneId,
+        path: String,
+        is_remote: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if is_remote && !self.remote_client.is_connected() {
+            self.status_message = Some(
+                "Remote bookmark needs an active SFTP connection; connect first".to_string(),
+            );
+            self.open_connect_modal();
+            cx.notify();
+            return;
+        }
+        self.modal = ActiveModal::None;
+        self.navigate_pane(pane_id, path, cx);
+        cx.notify();
+    }
+
     pub fn disconnect_remote(&mut self) {
         self.remote_client.disconnect();
         self.right_pane.entries.clear();
         self.right_pane.current_path = "/".to_string();
+        self.right_pane.path_input_buffer = "/".to_string();
+        self.right_pane.selected_items.clear();
+        self.right_pane.focused_index = None;
+        self.right_pane.error_message = None;
+        self.right_pane.is_loading = false;
         self.status_message = Some("Disconnected from remote host".to_string());
     }
 
     pub fn execute_connect(&mut self, cx: &mut Context<Self>) {
+        // First attempt never auto-trusts: unknown keys surface the
+        // trust dialog instead of being silently added to known_hosts.
         if let ActiveModal::Connect(ref mut state) = self.modal {
             state.is_connecting = true;
             state.error_msg = None;
@@ -441,6 +626,13 @@ impl RiftApp {
             let auth_type = state.auth_type;
             let remember = state.remember_credentials;
             let save_name = state.save_as_profile_name.trim().to_string();
+
+            if host.is_empty() || username.is_empty() {
+                state.is_connecting = false;
+                state.error_msg = Some("Host and username are required".to_string());
+                cx.notify();
+                return;
+            }
 
             let auth_method = match auth_type {
                 1 => AuthMethod::PrivateKey {
@@ -469,62 +661,118 @@ impl RiftApp {
                 remote_default_dir: Some("/".to_string()),
             };
 
-            if remember {
-                let _ = ProfileStore::save_profile(&profile);
-                if !password.is_empty() {
-                    let _ = crate::remote::CredentialStore::save_password(&profile.id, &password);
-                }
-            }
+            let password_opt = if password.is_empty() {
+                None
+            } else {
+                Some(password)
+            };
+            self.start_connection(profile, password_opt, false, cx);
+        }
+    }
 
-            let client = self.remote_client.clone();
+    /// Retries the pending connection with explicit user trust after the
+    /// host-key dialog. Previously a no-op: it re-read a connect dialog
+    /// that was no longer open.
+    pub fn trust_pending_connection(&mut self, cx: &mut Context<Self>) {
+        if let ActiveModal::HostKeyTrust(ref state) = self.modal {
+            let profile = state.pending_profile.clone();
+            let password = state.pending_password.clone();
+            self.start_connection(profile, password, true, cx);
+        }
+    }
 
-            cx.spawn(async move |this, cx| {
-                let res = client.connect(profile.clone(), Some(password), true).await;
-                let _ = this.update(cx, |app, cx| {
-                    match res {
-                        Ok(HostKeyStatus::Trusted) => {
-                            app.modal = ActiveModal::None;
-                            app.status_message =
-                                Some(format!("Connected to {}@{}:{}", profile.username, profile.host, profile.port));
-                            app.right_pane.is_remote = true;
-                            app.right_pane.current_path =
-                                profile.remote_default_dir.unwrap_or_else(|| "/".to_string());
-                            app.refresh_pane(PaneId::Right);
+    /// Shared connection driver. Profiles and secrets are persisted only
+    /// after authentication succeeds, never on failure.
+    fn start_connection(
+        &mut self,
+        profile: ConnectionProfile,
+        password: Option<String>,
+        trust_unknown_host: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let client = self.remote_client.clone();
+
+        cx.spawn(async move |this, cx| {
+            let res = client
+                .connect(profile.clone(), password.clone(), trust_unknown_host)
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                match res {
+                    Ok(HostKeyStatus::Trusted) => {
+                        if profile.remember_credentials {
+                            let _ = ProfileStore::save_profile(&profile);
+                            if let Some(secret) = password.as_ref() {
+                                if !secret.is_empty() {
+                                    let _ = crate::remote::CredentialStore::save_password(
+                                        &profile.id,
+                                        secret,
+                                    );
+                                }
+                            }
                         }
-                        Ok(HostKeyStatus::Unknown {
+                        app.modal = ActiveModal::None;
+                        app.status_message = Some(format!(
+                            "Connected to {}@{}:{}",
+                            profile.username, profile.host, profile.port
+                        ));
+                        app.right_pane.is_remote = true;
+                        app.right_pane.current_path = profile
+                            .remote_default_dir
+                            .clone()
+                            .unwrap_or_else(|| "/".to_string());
+                        app.refresh_pane(PaneId::Right, cx);
+                    }
+                    Ok(HostKeyStatus::Unknown {
+                        host,
+                        port,
+                        fingerprint,
+                        key_type,
+                    }) => {
+                        app.modal = ActiveModal::HostKeyTrust(HostKeyModalState {
                             host,
                             port,
                             fingerprint,
                             key_type,
-                        }) => {
-                            app.modal = ActiveModal::HostKeyTrust(HostKeyModalState {
-                                host,
-                                port,
-                                fingerprint,
-                                key_type,
-                            });
-                        }
-                        Ok(HostKeyStatus::Mismatch { fingerprint, .. }) => {
-                            if let ActiveModal::Connect(ref mut s) = app.modal {
-                                s.is_connecting = false;
-                                s.error_msg = Some(format!(
-                                    "HOST KEY CHANGED! Potential security risk. Fingerprint: {fingerprint}"
-                                ));
-                            }
-                        }
-                        Err(e) => {
-                            if let ActiveModal::Connect(ref mut s) = app.modal {
-                                s.is_connecting = false;
-                                s.error_msg = Some(e);
-                            }
-                        }
-                        _ => {}
+                            pending_profile: profile,
+                            pending_password: password,
+                        });
                     }
-                    cx.notify();
-                });
-            })
-            .detach();
-        }
+                    Ok(HostKeyStatus::Mismatch { fingerprint, .. }) => {
+                        if let ActiveModal::Connect(ref mut s) = app.modal {
+                            s.is_connecting = false;
+                            s.error_msg = Some(format!(
+                                "HOST KEY CHANGED! Potential security risk. Fingerprint: {fingerprint}"
+                            ));
+                        } else {
+                            app.modal = ActiveModal::None;
+                            app.status_message = Some(format!(
+                                "HOST KEY CHANGED! Connection refused. Fingerprint: {fingerprint}"
+                            ));
+                        }
+                    }
+                    Ok(HostKeyStatus::Error(e)) => {
+                        if let ActiveModal::Connect(ref mut s) = app.modal {
+                            s.is_connecting = false;
+                            s.error_msg = Some(e);
+                        } else {
+                            app.modal = ActiveModal::None;
+                            app.status_message = Some(format!("Connection failed: {e}"));
+                        }
+                    }
+                    Err(e) => {
+                        if let ActiveModal::Connect(ref mut s) = app.modal {
+                            s.is_connecting = false;
+                            s.error_msg = Some(e);
+                        } else {
+                            app.modal = ActiveModal::None;
+                            app.status_message = Some(format!("Connection failed: {e}"));
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn open_command_palette(&mut self) {
@@ -545,7 +793,7 @@ impl RiftApp {
             ("Toggle Theme (Dark / Light)", 6, Some("Ctrl+T")),
             ("Switch Active Pane", 7, Some("Tab")),
             ("Go to Parent Directory", 8, Some("Backspace")),
-            ("Refresh Current Pane", 9, Some("Ctrl+R / F5")),
+            ("Refresh Current Pane", 9, Some("Ctrl+R")),
             ("Open Bookmarks", 10, Some("Ctrl+B")),
             ("Add Bookmark for Current Path", 11, Some("Ctrl+Shift+B")),
             ("Focus Filter Search", 12, Some("Ctrl+F / /")),
@@ -563,7 +811,7 @@ impl RiftApp {
                 let pane_id = self.active_pane;
                 self.modal = ActiveModal::NewFolder(NewFolderModalState {
                     target_pane: pane_id,
-                    folder_name: "new_folder".to_string(),
+                    folder_name: String::new(),
                 });
             }
             3 => {
@@ -601,13 +849,13 @@ impl RiftApp {
             }
             8 => {
                 let active = self.active_pane;
-                self.go_parent(active);
+                self.go_parent(active, cx);
             }
             9 => {
                 let active = self.active_pane;
-                self.refresh_pane(active);
+                self.refresh_pane(active, cx);
             }
-            10 => self.modal = ActiveModal::BookmarksList,
+            10 => self.open_bookmarks_modal(),
             11 => {
                 let pane = match self.active_pane {
                     PaneId::Left => &self.left_pane,
@@ -740,11 +988,15 @@ impl RiftApp {
                     cx.notify();
                     return;
                 }
+                // Text fields: 0 host, 1 port, 2 username, 3 secret
+                // (password or key path), 4 profile name.
+                const CONNECT_FIELDS: usize = 5;
                 if key == "tab" {
                     if shift {
-                        state.focused_field = (state.focused_field + 3) % 4;
+                        state.focused_field =
+                            (state.focused_field + CONNECT_FIELDS - 1) % CONNECT_FIELDS;
                     } else {
-                        state.focused_field = (state.focused_field + 1) % 4;
+                        state.focused_field = (state.focused_field + 1) % CONNECT_FIELDS;
                     }
                     cx.notify();
                     return;
@@ -755,7 +1007,7 @@ impl RiftApp {
                     return;
                 }
                 if key == "down" {
-                    if state.focused_field < 3 {
+                    if state.focused_field + 1 < CONNECT_FIELDS {
                         state.focused_field += 1;
                         cx.notify();
                     }
@@ -770,7 +1022,14 @@ impl RiftApp {
                         0 => { state.host_input.pop(); }
                         1 => { state.port_input.pop(); }
                         2 => { state.username_input.pop(); }
-                        3 => { state.password_input.pop(); }
+                        3 => {
+                            if state.auth_type == 1 {
+                                state.key_path_input.pop();
+                            } else if state.auth_type == 0 {
+                                state.password_input.pop();
+                            }
+                        }
+                        4 => { state.save_as_profile_name.pop(); }
                         _ => {}
                     }
                     cx.notify();
@@ -781,7 +1040,14 @@ impl RiftApp {
                         0 => state.host_input.push(ch),
                         1 => if ch.is_ascii_digit() { state.port_input.push(ch); },
                         2 => state.username_input.push(ch),
-                        3 => state.password_input.push(ch),
+                        3 => {
+                            if state.auth_type == 1 {
+                                state.key_path_input.push(ch);
+                            } else if state.auth_type == 0 {
+                                state.password_input.push(ch);
+                            }
+                        }
+                        4 => state.save_as_profile_name.push(ch),
                         _ => {}
                     }
                     cx.notify();
@@ -803,7 +1069,7 @@ impl RiftApp {
                         state.folder_name.clone()
                     };
                     self.modal = ActiveModal::None;
-                    self.create_folder(target, &name);
+                    self.create_folder(target, &name, cx);
                     cx.notify();
                     return;
                 }
@@ -830,7 +1096,7 @@ impl RiftApp {
                     let orig = state.original_name.clone();
                     let new_n = state.new_name.clone();
                     self.modal = ActiveModal::None;
-                    self.rename_entry(target, &orig, &new_n);
+                    self.rename_entry(target, &orig, &new_n, cx);
                     cx.notify();
                     return;
                 }
@@ -896,7 +1162,7 @@ impl RiftApp {
                     let p = state.target_pane;
                     let items = state.item_names.clone();
                     self.modal = ActiveModal::None;
-                    self.confirm_delete(p, items);
+                    self.confirm_delete(p, items, cx);
                     cx.notify();
                     return;
                 }
@@ -909,8 +1175,7 @@ impl RiftApp {
                     return;
                 }
                 if key == "enter" {
-                    self.modal = ActiveModal::None;
-                    self.execute_connect(cx);
+                    self.trust_pending_connection(cx);
                     return;
                 }
                 return;
@@ -921,13 +1186,8 @@ impl RiftApp {
                     cx.notify();
                     return;
                 }
-                if key == "enter" {
-                    self.modal = ActiveModal::None;
-                    self.status_message = Some("Overwriting conflicting file".to_string());
-                    cx.notify();
-                    return;
-                }
-                if key == "s" {
+                // Safe default: Enter skips instead of overwriting.
+                if key == "enter" || key == "s" {
                     self.modal = ActiveModal::None;
                     self.status_message = Some("Skipped conflicting file".to_string());
                     cx.notify();
@@ -1003,7 +1263,7 @@ impl RiftApp {
                 };
                 pane.filter.clear();
                 pane.filter_active = false;
-                self.refresh_pane(active_pane);
+                self.refresh_pane(active_pane, cx);
                 cx.notify();
                 return;
             }
@@ -1023,7 +1283,7 @@ impl RiftApp {
                     PaneId::Right => &mut self.right_pane,
                 };
                 pane.filter.pop();
-                self.refresh_pane(active_pane);
+                self.refresh_pane(active_pane, cx);
                 cx.notify();
                 return;
             }
@@ -1033,7 +1293,7 @@ impl RiftApp {
                     PaneId::Right => &mut self.right_pane,
                 };
                 pane.filter.push(ch);
-                self.refresh_pane(active_pane);
+                self.refresh_pane(active_pane, cx);
                 cx.notify();
                 return;
             }
@@ -1061,7 +1321,7 @@ impl RiftApp {
                         self.right_pane.path_input_buffer.clone()
                     }
                 };
-                self.navigate_pane(active_pane, p);
+                self.navigate_pane(active_pane, p, cx);
                 cx.notify();
                 return;
             }
@@ -1089,9 +1349,11 @@ impl RiftApp {
         // 6. Navigation and File Operations
         if key == "f5" || (ctrl && key == "r") {
             if ctrl && key == "r" {
-                self.refresh_pane(self.active_pane);
+                let active = self.active_pane;
+                self.refresh_pane(active, cx);
             } else {
-                self.transfer_selected(self.active_pane);
+                let active = self.active_pane;
+                self.transfer_selected(active, cx);
             }
             cx.notify();
             return;
@@ -1123,13 +1385,60 @@ impl RiftApp {
             return;
         }
 
-        if ctrl && key == "b" {
-            self.modal = ActiveModal::BookmarksList;
+        if ctrl && shift && key == "b" {
+            let pane = match self.active_pane {
+                PaneId::Left => &self.left_pane,
+                PaneId::Right => &self.right_pane,
+            };
+            let path = pane.current_path.clone();
+            let is_remote = pane.is_remote;
+            let default_label = std::path::Path::new(&path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Bookmark")
+                .to_string();
+            self.modal = ActiveModal::AddBookmark(AddBookmarkModalState {
+                label: default_label,
+                path,
+                is_remote,
+                is_session_only: false,
+            });
             cx.notify();
             return;
         }
 
-        if key == "delete" || (key == "backspace" && shift) {
+        if ctrl && key == "b" {
+            self.open_bookmarks_modal();
+            cx.notify();
+            return;
+        }
+
+        // Copy the focused (or first selected) entry's full path. The
+        // context menu advertises Ctrl+C, so it must work globally too.
+        if ctrl && key == "c" {
+            let pane = match self.active_pane {
+                PaneId::Left => &self.left_pane,
+                PaneId::Right => &self.right_pane,
+            };
+            let target: Option<String> = pane
+                .focused_index
+                .and_then(|i| pane.entries.get(i))
+                .or_else(|| {
+                    pane.selected_items
+                        .iter()
+                        .filter_map(|n| pane.entries.iter().find(|e| &e.name == n))
+                        .next()
+                })
+                .map(|e| e.path.to_string_lossy().to_string());
+            if let Some(path) = target {
+                cx.write_to_clipboard(ClipboardItem::new_string(path.clone()));
+                self.status_message = Some(format!("Copied: {path}"));
+            }
+            cx.notify();
+            return;
+        }
+
+        if key == "delete" || key == "f8" || (key == "backspace" && shift) {
             self.delete_selected(self.active_pane);
             cx.notify();
             return;
@@ -1147,7 +1456,8 @@ impl RiftApp {
         }
 
         if key == "backspace" || (ev.keystroke.modifiers.alt && key == "up") {
-            self.go_parent(self.active_pane);
+            let active = self.active_pane;
+            self.go_parent(active, cx);
             cx.notify();
             return;
         }
@@ -1162,19 +1472,22 @@ impl RiftApp {
         }
 
         if ev.keystroke.modifiers.alt && key == "left" {
-            self.go_back(self.active_pane);
+            let active = self.active_pane;
+            self.go_back(active, cx);
             cx.notify();
             return;
         }
 
         if ev.keystroke.modifiers.alt && key == "right" {
-            self.go_forward(self.active_pane);
+            let active = self.active_pane;
+            self.go_forward(active, cx);
             cx.notify();
             return;
         }
 
         if ctrl && key == "h" {
-            self.toggle_hidden(self.active_pane);
+            let active = self.active_pane;
+            self.toggle_hidden(active, cx);
             cx.notify();
             return;
         }
@@ -1292,7 +1605,7 @@ impl RiftApp {
 
             if let Some(path) = target_path {
                 if is_dir {
-                    self.navigate_pane(active, path);
+                    self.navigate_pane(active, path, cx);
                     cx.notify();
                 }
             }
@@ -1301,7 +1614,7 @@ impl RiftApp {
 }
 
 impl Render for RiftApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
 
         div()
             .font_family(self.theme.font_ui)
@@ -1334,7 +1647,7 @@ impl Render for RiftApp {
                 el.child(self.render_modal_overlay(cx))
             })
             .when_some(self.context_menu.as_ref(), |el, menu| {
-                el.child(self.render_context_menu(menu, cx))
+                el.child(self.render_context_menu(menu, window, cx))
             })
     }
 }
@@ -1356,7 +1669,7 @@ impl RiftApp {
     }
 
     pub fn toggle_theme(&mut self) {
-        if self.theme.bg_pane == Theme::zed_dark().bg_pane {
+        if self.theme.is_dark {
             self.theme = Theme::zed_light();
         } else {
             self.theme = Theme::zed_dark();

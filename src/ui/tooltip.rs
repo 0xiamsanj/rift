@@ -6,20 +6,26 @@ use crate::theme::Theme;
 pub struct TooltipView {
     pub text: SharedString,
     pub shortcut: Option<SharedString>,
+    pub theme: Theme,
 }
 
 impl TooltipView {
-    pub fn new(text: impl Into<SharedString>, shortcut: Option<impl Into<SharedString>>) -> Self {
+    pub fn new(
+        theme: Theme,
+        text: impl Into<SharedString>,
+        shortcut: Option<impl Into<SharedString>>,
+    ) -> Self {
         Self {
             text: text.into(),
             shortcut: shortcut.map(Into::into),
+            theme,
         }
     }
 }
 
 impl Render for TooltipView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::default();
+        let theme = self.theme;
         div()
             .flex()
             .items_center()
@@ -57,6 +63,7 @@ impl Render for TooltipView {
 }
 
 pub fn tooltip_view(
+    theme: Theme,
     text: impl Into<SharedString> + 'static,
     shortcut: Option<impl Into<SharedString> + 'static>,
 ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
@@ -65,6 +72,6 @@ pub fn tooltip_view(
     move |_window, cx| {
         let text = text.clone();
         let shortcut = shortcut.clone();
-        cx.new(|_cx| TooltipView { text, shortcut }).into()
+        cx.new(|_cx| TooltipView { text, shortcut, theme }).into()
     }
 }
