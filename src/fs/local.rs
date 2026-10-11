@@ -114,6 +114,10 @@ impl LocalFs {
         direction: SortDirection,
         directories_first: bool,
     ) {
+        // Direct comparator sort: fastest in practice for typical directory
+        // sizes. Only Name/Extension allocate (one lowercase per comparison);
+        // a decorate-sort-undecorate variant measured slower in dev builds
+        // because its setup allocations dominate below ~100k rows.
         entries.sort_by(|a, b| {
             if directories_first {
                 let a_is_dir = a.is_dir();
